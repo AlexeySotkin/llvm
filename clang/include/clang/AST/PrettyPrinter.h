@@ -18,6 +18,7 @@
 
 namespace clang {
 
+class DeclContext;
 class LangOptions;
 class SourceManager;
 class Stmt;
@@ -39,6 +40,15 @@ public:
   virtual std::string remapPath(StringRef Path) const {
     return std::string(Path);
   }
+
+  /// When printing type to be inserted into code in specific context, this
+  /// callback can be used to avoid printing the redundant part of the
+  /// qualifier. For example, when inserting code inside namespace foo, we
+  /// should print bar::SomeType instead of foo::bar::SomeType.
+  /// To do this, shouldPrintScope should return true on "foo" NamespaceDecl.
+  /// The printing stops at the first isScopeVisible() == true, so there will
+  /// be no calls with outer scopes.
+  virtual bool isScopeVisible(const DeclContext *DC) const { return false; }
 };
 
 /// Describes how types, statements, expressions, and declarations should be
@@ -52,19 +62,22 @@ struct PrintingPolicy {
       : Indentation(2), SuppressSpecifiers(false),
         SuppressTagKeyword(LO.CPlusPlus), IncludeTagDefinition(false),
         SuppressScope(false), SuppressUnwrittenScope(false),
-        SuppressInitializers(false), ConstantArraySizeAsWritten(false),
-        AnonymousTagLocations(true), SuppressStrongLifetime(false),
-        SuppressLifetimeQualifiers(false), SuppressTypedefs(false),
-        SuppressTemplateArgsInCXXConstructors(false), Bool(LO.Bool),
-        Restrict(LO.C99), Alignof(LO.CPlusPlus11), UnderscoreAlignof(LO.C11),
-        UseVoidForZeroParams(!LO.CPlusPlus),
+        SuppressInlineNamespace(true), SuppressInitializers(false),
+        ConstantArraySizeAsWritten(false), AnonymousTagLocations(true),
+        SuppressStrongLifetime(false), SuppressLifetimeQualifiers(false),
+        SuppressTypedefs(false), SuppressTemplateArgsInCXXConstructors(false),
+        SuppressDefaultTemplateArgs(true), Bool(LO.Bool),
+        Nullptr(LO.CPlusPlus11), Restrict(LO.C99), Alignof(LO.CPlusPlus11),
+        UnderscoreAlignof(LO.C11), UseVoidForZeroParams(!LO.CPlusPlus),
         SplitTemplateClosers(!LO.CPlusPlus11), TerseOutput(false),
         PolishForDeclaration(false), Half(LO.Half),
         MSWChar(LO.MicrosoftExt && !LO.WChar), IncludeNewlines(true),
         MSVCFormatting(false), ConstantsAsWritten(false),
         SuppressImplicitBase(false), FullyQualifiedName(false),
         SuppressDefinition(false), SuppressDefaultTemplateArguments(false),
-        PrintCanonicalTypes(false), PrintInjectedClassNameWithArguments(true) {}
+        PrintCanonicalTypes(false),
+        SkipCanonicalizationOfTemplateTypeParms(false),
+        PrintInjectedClassNameWithArguments(true) {}
 
   /// Adjust this printing policy for cases where it's known that we're
   /// printing C++ code (for instance, if AST dumping reaches a C++-only
@@ -126,9 +139,14 @@ struct PrintingPolicy {
   /// Suppresses printing of scope specifiers.
   unsigned SuppressScope : 1;
 
-  /// Suppress printing parts of scope specifiers that don't need
-  /// to be written, e.g., for inline or anonymous namespaces.
+  /// Suppress printing parts of scope specifiers that are never
+  /// written, e.g., for anonymous namespaces.
   unsigned SuppressUnwrittenScope : 1;
+
+  /// Suppress printing parts of scope specifiers that correspond
+  /// to inline namespaces, where the name is unambiguous with the specifier
+  /// removed.
+  unsigned SuppressInlineNamespace : 1;
 
   /// Suppress printing of variable initializers.
   ///
@@ -190,9 +208,17 @@ struct PrintingPolicy {
   /// constructors.
   unsigned SuppressTemplateArgsInCXXConstructors : 1;
 
+  /// When true, attempt to suppress template arguments that match the default
+  /// argument for the parameter.
+  unsigned SuppressDefaultTemplateArgs : 1;
+
   /// Whether we can use 'bool' rather than '_Bool' (even if the language
   /// doesn't actually have 'bool', because, e.g., it is defined as a macro).
   unsigned Bool : 1;
+
+  /// Whether we should use 'nullptr' rather than '0' as a null pointer
+  /// constant.
+  unsigned Nullptr : 1;
 
   /// Whether we can use 'restrict' rather than '__restrict'.
   unsigned Restrict : 1;
@@ -286,6 +312,20 @@ struct PrintingPolicy {
 
   /// Whether to print types as written or canonically.
   unsigned PrintCanonicalTypes : 1;
+
+  /// Whether to skip the canonicalization (when PrintCanonicalTypes is set) for
+  /// TemplateTypeParmTypes. This has no effect if PrintCanonicalTypes isn't
+  /// set. This is useful for non-type-template-parameters, since the canonical
+  /// version of:
+  ///   \code
+  ///   TemplateTypeParmType '_Tp'
+  ///     TemplateTypeParm '_Tp'
+  ///   \endcode
+  /// is:
+  ///   \code
+  ///   TemplateTypeParmType 'type-parameter-0-0'
+  ///   \endcode
+  unsigned SkipCanonicalizationOfTemplateTypeParms : 1;
 
   /// Whether to print an InjectedClassNameType with template arguments or as
   /// written. When a template argument is unnamed, printing it results in

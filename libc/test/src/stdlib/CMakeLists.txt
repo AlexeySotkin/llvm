@@ -24,3 +24,45 @@ add_libc_unittest(
     libc.src.stdlib._Exit
     libc.src.signal.raise
 )
+
+add_libc_unittest(
+  abs_test
+  SUITE
+    libc_stdlib_unittests
+  SRCS
+    abs_test.cpp
+  DEPENDS
+    libc.src.stdlib.abs
+)
+
+add_libc_unittest(
+  labs_test
+  SUITE
+    libc_stdlib_unittests
+  SRCS
+    labs_test.cpp
+  DEPENDS
+    libc.src.stdlib.labs
+)
+
+add_libc_unittest(
+  llabs_test
+  SUITE
+    libc_stdlib_unittests
+  SRCS
+    llabs_test.cpp
+  DEPENDS
+    libc.src.stdlib.llabs
+)
+
+add_libc_unittest(
+  strtoll_test
+  SUITE
+    libc_stdlib_unittests
+  SRCS
+    strtoll_test.cpp
+  DEPENDS
+    libc.src.stdlib.strtoll
+    libc.include.errno
+    libc.test.errno_setter_matcher
+)

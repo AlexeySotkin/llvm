@@ -69,9 +69,9 @@ namespace dr603 { // dr603: yes
 namespace dr606 { // dr606: yes
 #if __cplusplus >= 201103L
   template<typename T> struct S {};
-  template<typename T> void f(S<T> &&); // expected-note {{no known conversion from 'S<int>' to 'S<int> &&'}}
+  template<typename T> void f(S<T> &&); // expected-note {{expects an rvalue}}
   template<typename T> void g(T &&);
-  template<typename T> void h(const T &&); // expected-note {{no known conversion from 'S<int>' to 'const dr606::S<int> &&'}}
+  template<typename T> void h(const T &&); // expected-note {{expects an rvalue}}
 
   void test(S<int> s) {
     f(s); // expected-error {{no match}}
@@ -376,7 +376,7 @@ namespace dr641 { // dr641: yes
     struct abc : xyz {};
 
     template<typename T>
-    void use(T &); // expected-note {{expects an l-value}}
+    void use(T &); // expected-note {{expects an lvalue}}
     void test() {
       use<xyz>(xyz()); // expected-error {{no match}}
       use<const xyz>(xyz());
@@ -606,11 +606,13 @@ namespace dr654 { // dr654: sup 1423
 
 namespace dr655 { // dr655: yes
   struct A { A(int); }; // expected-note 2-3{{not viable}}
+                        // expected-note@-1 {{'dr655::A' declared here}}
   struct B : A {
-    A a;
+    A a; // expected-note {{member is declared here}}
     B();
     B(int) : B() {} // expected-error 0-1 {{C++11}}
     B(int*) : A() {} // expected-error {{no matching constructor}}
+                     // expected-error@-1 {{must explicitly initialize the member 'a'}}
   };
 }
 
@@ -1153,7 +1155,7 @@ namespace dr696 { // dr696: yes
     };
 #if __cplusplus >= 201103L
     (void) [] { int arr[N]; (void)arr; };
-    (void) [] { f(&N); }; // expected-error {{cannot be implicitly captured}} expected-note {{here}}
+    (void)[] { f(&N); }; // expected-error {{cannot be implicitly captured}} expected-note {{here}} expected-note 2 {{capture 'N' by}} expected-note 2 {{default capture by}}
 #endif
   }
 }

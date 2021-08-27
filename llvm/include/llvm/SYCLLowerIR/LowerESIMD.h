@@ -10,8 +10,9 @@
 // - ESIMD intrinsics, e.g.:
 //     template <typename Ty, int N, int M, int VStride, int Width,
 //       int Stride, int ParentWidth = 0>
-//       sycl::intel::gpu::vector_type_t<Ty, M>
-//       __esimd_rdregion(sycl::intel::gpu::vector_type_t<Ty, N> Input,
+//       sycl::ext::intel::experimental::esimd::vector_type_t<Ty, M>
+//       __esimd_rdregion(sycl::ext::intel::experimental::esimd::vector_type_t<Ty,
+//       N> Input,
 //         uint16_t Offset);
 //===----------------------------------------------------------------------===//
 
@@ -27,11 +28,13 @@ namespace llvm {
 /// like intrinsics to a form parsable by the ESIMD-aware SPIRV translator.
 class SYCLLowerESIMDPass : public PassInfoMixin<SYCLLowerESIMDPass> {
 public:
-  PreservedAnalyses run(Function &F, FunctionAnalysisManager &,
-                        SmallPtrSet<Type *, 4> &GVTS);
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &);
+
+private:
+  size_t runOnFunction(Function &F, SmallPtrSet<Type *, 4> &);
 };
 
-FunctionPass *createSYCLLowerESIMDPass();
+ModulePass *createSYCLLowerESIMDPass();
 void initializeSYCLLowerESIMDLegacyPassPass(PassRegistry &);
 
 class ESIMDLowerLoadStorePass : public PassInfoMixin<ESIMDLowerLoadStorePass> {
@@ -41,6 +44,21 @@ public:
 
 FunctionPass *createESIMDLowerLoadStorePass();
 void initializeESIMDLowerLoadStorePass(PassRegistry &);
+
+// Pass converts simd* function parameters and globals to
+// llvm's first-class vector* type.
+class ESIMDLowerVecArgPass : public PassInfoMixin<ESIMDLowerVecArgPass> {
+public:
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &);
+
+private:
+  DenseMap<GlobalVariable *, GlobalVariable *> OldNewGlobal;
+
+  Function *rewriteFunc(Function &F);
+  Type *getSimdArgPtrTyOrNull(Value *arg);
+  void fixGlobals(Module &M);
+  void removeOldGlobals();
+};
 
 ModulePass *createESIMDLowerVecArgPass();
 void initializeESIMDLowerVecArgLegacyPassPass(PassRegistry &);

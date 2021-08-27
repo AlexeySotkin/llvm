@@ -1,10 +1,6 @@
 add_custom_target(ClangUnitTests)
 set_target_properties(ClangUnitTests PROPERTIES FOLDER "Clang tests")
 
-if (CXX_SUPPORTS_SUGGEST_OVERRIDE_FLAG)
-  add_compile_options("-Wno-suggest-override")
-endif()
-
 if(CLANG_BUILT_STANDALONE)
   # LLVMTestingSupport library is needed for some of the unittests.
   if (EXISTS ${LLVM_MAIN_SRC_DIR}/lib/Testing/Support
@@ -28,16 +24,18 @@ add_subdirectory(Driver)
 if(CLANG_ENABLE_STATIC_ANALYZER)
   add_subdirectory(Analysis)
   add_subdirectory(StaticAnalyzer)
-  add_subdirectory(Frontend)
 endif()
 add_subdirectory(ASTMatchers)
 add_subdirectory(AST)
 add_subdirectory(CrossTU)
 add_subdirectory(Tooling)
+add_subdirectory(Introspection)
 add_subdirectory(Format)
+add_subdirectory(Frontend)
 add_subdirectory(Rewrite)
 add_subdirectory(Sema)
 add_subdirectory(CodeGen)
+add_subdirectory(Interpreter)
 # FIXME: libclang unit tests are disabled on Windows due
 # to failures, mostly in libclang.VirtualFileOverlay_*.
 if(NOT WIN32 AND CLANG_TOOL_LIBCLANG_BUILD) 

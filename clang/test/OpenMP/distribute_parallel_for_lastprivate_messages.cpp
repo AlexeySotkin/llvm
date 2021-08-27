@@ -1,8 +1,8 @@
 // RUN: %clang_cc1 -verify -fopenmp -fopenmp-version=45 %s -Wuninitialized
-// RUN: %clang_cc1 -verify -fopenmp -fopenmp-version=50 %s -Wuninitialized
+// RUN: %clang_cc1 -verify -fopenmp %s -Wuninitialized
 
 // RUN: %clang_cc1 -verify -fopenmp-simd -fopenmp-version=45 %s -Wuninitialized
-// RUN: %clang_cc1 -verify -fopenmp-simd -fopenmp-version=50 %s -Wuninitialized
+// RUN: %clang_cc1 -verify -fopenmp-simd %s -Wuninitialized
 
 void foo() {
 }
@@ -11,7 +11,7 @@ bool foobool(int argc) {
   return argc;
 }
 extern int omp_default_mem_alloc;
-struct S1; // expected-note 2 {{declared here}} expected-note 2 {{forward declaration of 'S1'}}
+struct S1; // expected-note 2 {{declared here}} expected-note 3 {{forward declaration of 'S1'}}
 extern S1 a;
 class S2 {
   mutable int a;

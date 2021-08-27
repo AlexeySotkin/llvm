@@ -150,7 +150,8 @@ bool Compilation::CleanupFileList(const TempFileList &Files,
     // Temporary file lists contain files that need to be cleaned. The
     // file containing the information is also removed
     if (File.second == types::TY_Tempfilelist ||
-        File.second == types::TY_Tempfiletable) {
+        File.second == types::TY_Tempfiletable ||
+        File.second == types::TY_FPGA_Dependencies_List) {
       // These are temporary files and need to be removed.
       bool IsTable = File.second == types::TY_Tempfiletable;
 
@@ -204,11 +205,12 @@ int Compilation::ExecuteCommand(const Command &C,
 
     // Follow gcc implementation of CC_PRINT_OPTIONS; we could also cache the
     // output stream.
-    if (getDriver().CCPrintOptions && getDriver().CCPrintOptionsFilename) {
+    if (getDriver().CCPrintOptions &&
+        !getDriver().CCPrintOptionsFilename.empty()) {
       std::error_code EC;
       OwnedStream.reset(new llvm::raw_fd_ostream(
-          getDriver().CCPrintOptionsFilename, EC,
-          llvm::sys::fs::OF_Append | llvm::sys::fs::OF_Text));
+          getDriver().CCPrintOptionsFilename.c_str(), EC,
+          llvm::sys::fs::OF_Append | llvm::sys::fs::OF_TextWithCRLF));
       if (EC) {
         getDriver().Diag(diag::err_drv_cc_print_options_failure)
             << EC.message();
@@ -227,6 +229,8 @@ int Compilation::ExecuteCommand(const Command &C,
   std::string Error;
   bool ExecutionFailed;
   int Res = C.Execute(Redirects, &Error, &ExecutionFailed);
+  if (PostCallback)
+    PostCallback(C, Res);
   if (!Error.empty()) {
     assert(Res && "Error string set with 0 result code!");
     getDriver().Diag(diag::err_drv_command_failure) << Error;
@@ -244,6 +248,10 @@ static bool ActionFailed(const Action *A,
                          const FailingCommandList &FailingCommands) {
   if (FailingCommands.empty())
     return false;
+
+  for (const auto &CI : FailingCommands)
+    if (!CI.second->getWillExitForErrorCode(CI.first))
+      return false;
 
   // CUDA/HIP/SYCL can have the same input source code compiled multiple times
   // so do not compile again if there are already failures. It is OK to abort
@@ -281,7 +289,9 @@ void Compilation::ExecuteJobs(const JobList &Jobs,
     if (int Res = ExecuteCommand(Job, FailingCommand)) {
       FailingCommands.push_back(std::make_pair(Res, FailingCommand));
       // Bail as soon as one command fails in cl driver mode.
-      if (TheDriver.IsCLMode())
+      // Do not bail when the tool is setup to allow for continuation upon
+      // failure.
+      if (TheDriver.IsCLMode() && FailingCommand->getWillExitForErrorCode(Res))
         return;
     }
   }

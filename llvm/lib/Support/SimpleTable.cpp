@@ -76,7 +76,7 @@ Error SimpleTable::addColumn(const Twine &Title, ArrayRef<std::string> Cells) {
   if (!Rows.empty() && (Rows.size() != N))
     return makeError("column size mismatch for " + Title);
   if (Error Err = addColumnName(Title.str()))
-    return std::move(Err);
+    return Err;
   if (Rows.empty()) {
     Rows.resize(Cells.size());
     for (auto &R : Rows)
@@ -109,12 +109,22 @@ Error SimpleTable::replaceColumn(StringRef Name, const SimpleTable &Src,
   return Error::success();
 }
 
+Error SimpleTable::updateCellValue(StringRef ColName, int Row,
+                                   StringRef NewValue) {
+  if (getNumColumns() == 0)
+    return makeError("empty table");
+  if (Row > getNumRows() || Row < 0)
+    return makeError("row index out of bounds");
+  Rows[Row][getColumnId(ColName)] = NewValue.str();
+  return Error::success();
+}
+
 Error SimpleTable::renameColumn(StringRef OldName, StringRef NewName) {
   int I = getColumnId(OldName);
 
   if (I < 0)
     return makeError("column not found: " + OldName);
-  *ColumnNum2Name[I] = std::move(NewName.str());
+  *ColumnNum2Name[I] = NewName.str();
   ColumnName2Num.erase(OldName);
   ColumnName2Num[StringRef(*ColumnNum2Name[I])] = I;
   return Error::success();

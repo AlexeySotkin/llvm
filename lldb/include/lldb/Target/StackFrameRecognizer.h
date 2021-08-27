@@ -37,7 +37,7 @@ public:
     return lldb::ValueObjectSP();
   }
   virtual lldb::StackFrameSP GetMostRelevantFrame() { return nullptr; };
-  virtual ~RecognizedStackFrame(){};
+  virtual ~RecognizedStackFrame() = default;
 
   std::string GetStopDescription() { return m_stop_desc; }
 
@@ -63,7 +63,7 @@ public:
     return "";
   }
 
-  virtual ~StackFrameRecognizer(){};
+  virtual ~StackFrameRecognizer() = default;
 };
 
 /// \class ScriptedStackFrameRecognizer
@@ -80,7 +80,7 @@ class ScriptedStackFrameRecognizer : public StackFrameRecognizer {
 public:
   ScriptedStackFrameRecognizer(lldb_private::ScriptInterpreter *interpreter,
                                const char *pclass);
-  ~ScriptedStackFrameRecognizer() override {}
+  ~ScriptedStackFrameRecognizer() override = default;
 
   std::string GetName() override {
     return GetPythonClassName();
@@ -154,7 +154,9 @@ class ValueObjectRecognizerSynthesizedValue : public ValueObject {
     SetName(parent.GetName());
   }
 
-  uint64_t GetByteSize() override { return m_parent->GetByteSize(); }
+  llvm::Optional<uint64_t> GetByteSize() override {
+    return m_parent->GetByteSize();
+  }
   lldb::ValueType GetValueType() const override { return m_type; }
   bool UpdateValue() override {
     if (!m_parent->UpdateValueIfNeeded()) return false;

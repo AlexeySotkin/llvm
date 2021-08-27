@@ -113,7 +113,7 @@ public:
 
   void *functionByIndex(int index) {
     if (index >= XPTI_INITIALIZE && index < XPTI_FW_API_COUNT) {
-      return m_dispatch_table[index];
+      return reinterpret_cast<void *>(m_dispatch_table[index]);
     }
     return nullptr;
   }
@@ -235,7 +235,7 @@ xptiMakeEvent(const char *name, xpti::payload_t *payload, uint16_t event,
   return nullptr;
 }
 
-XPTI_EXPORT_API const xpti::trace_event_data_t *xptiFindEvent(int64_t uid) {
+XPTI_EXPORT_API const xpti::trace_event_data_t *xptiFindEvent(uint64_t uid) {
   if (xpti::g_loader.noErrors()) {
     auto f = xpti::g_loader.functionByIndex(XPTI_FIND_EVENT);
     if (f) {

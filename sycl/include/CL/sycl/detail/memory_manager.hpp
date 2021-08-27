@@ -49,11 +49,13 @@ public:
                         RT::PiEvent &OutEvent);
 
   // Allocates memory buffer wrapped into an image. MemObj must be a buffer,
-  // not an image. Used in ESIMD extension to enable surface index-based access.
+  // not an image.
+  // TODO not used - remove.
   static void *wrapIntoImageBuffer(ContextImplPtr TargetContext, void *MemBuf,
                                    SYCLMemObjI *MemObj);
 
   // Releases the image buffer created by wrapIntoImageBuffer.
+  // TODO not used - remove.
   static void releaseImageBuffer(ContextImplPtr TargetContext, void *ImageBuf);
 
   // The following method creates OpenCL sub buffer for specified
@@ -149,6 +151,11 @@ public:
   static void prefetch_usm(void *Ptr, QueueImplPtr Queue, size_t Len,
                            std::vector<RT::PiEvent> DepEvents,
                            RT::PiEvent &OutEvent);
+
+  static void advise_usm(const void *Ptr, QueueImplPtr Queue, size_t Len,
+                         pi_mem_advice Advice,
+                         std::vector<RT::PiEvent> DepEvents,
+                         RT::PiEvent &OutEvent);
 };
 } // namespace detail
 } // namespace sycl

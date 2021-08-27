@@ -71,6 +71,16 @@ SPIRVDecorateGeneric::SPIRVDecorateGeneric(Op OC, SPIRVWord WC,
   updateModuleVersion();
 }
 
+SPIRVDecorateGeneric::SPIRVDecorateGeneric(Op OC, SPIRVWord WC,
+                                           Decoration TheDec,
+                                           SPIRVEntry *TheTarget, SPIRVWord V1,
+                                           SPIRVWord V2)
+    : SPIRVDecorateGeneric(OC, WC, TheDec, TheTarget, V1) {
+  Literals.push_back(V2);
+  validate();
+  updateModuleVersion();
+}
+
 SPIRVDecorateGeneric::SPIRVDecorateGeneric(Op OC)
     : SPIRVAnnotationGeneric(OC), Dec(DecorationRelaxedPrecision),
       Owner(nullptr) {}
@@ -91,7 +101,7 @@ size_t SPIRVDecorateGeneric::getLiteralCount() const { return Literals.size(); }
 void SPIRVDecorate::encode(spv_ostream &O) const {
   SPIRVEncoder Encoder = getEncoder(O);
   Encoder << Target << Dec;
-  switch (Dec) {
+  switch (static_cast<size_t>(Dec)) {
   case DecorationLinkageAttributes:
     SPIRVDecorateLinkageAttr::encodeLiterals(Encoder, Literals);
     break;
@@ -104,7 +114,7 @@ void SPIRVDecorate::encode(spv_ostream &O) const {
   case DecorationUserSemantic:
     SPIRVDecorateUserSemanticAttr::encodeLiterals(Encoder, Literals);
     break;
-  case DecorationFuncParamDescINTEL:
+  case internal::DecorationFuncParamDescINTEL:
     SPIRVDecorateFuncParamDescAttr::encodeLiterals(Encoder, Literals);
     break;
   default:
@@ -120,7 +130,7 @@ void SPIRVDecorate::setWordCount(SPIRVWord Count) {
 void SPIRVDecorate::decode(std::istream &I) {
   SPIRVDecoder Decoder = getDecoder(I);
   Decoder >> Target >> Dec;
-  switch (Dec) {
+  switch (static_cast<size_t>(Dec)) {
   case DecorationLinkageAttributes:
     SPIRVDecorateLinkageAttr::decodeLiterals(Decoder, Literals);
     break;
@@ -133,7 +143,7 @@ void SPIRVDecorate::decode(std::istream &I) {
   case DecorationUserSemantic:
     SPIRVDecorateUserSemanticAttr::decodeLiterals(Decoder, Literals);
     break;
-  case DecorationFuncParamDescINTEL:
+  case internal::DecorationFuncParamDescINTEL:
     SPIRVDecorateFuncParamDescAttr::decodeLiterals(Decoder, Literals);
     break;
   default:
@@ -142,10 +152,26 @@ void SPIRVDecorate::decode(std::istream &I) {
   getOrCreateTarget()->addDecorate(this);
 }
 
+void SPIRVDecorateId::encode(spv_ostream &O) const {
+  SPIRVEncoder Encoder = getEncoder(O);
+  Encoder << Target << Dec << Literals;
+}
+
+void SPIRVDecorateId::setWordCount(SPIRVWord Count) {
+  WordCount = Count;
+  Literals.resize(WordCount - FixedWC);
+}
+
+void SPIRVDecorateId::decode(std::istream &I) {
+  SPIRVDecoder Decoder = getDecoder(I);
+  Decoder >> Target >> Dec >> Literals;
+  getOrCreateTarget()->addDecorate(this);
+}
+
 void SPIRVMemberDecorate::encode(spv_ostream &O) const {
   SPIRVEncoder Encoder = getEncoder(O);
   Encoder << Target << MemberNumber << Dec;
-  switch (Dec) {
+  switch (static_cast<size_t>(Dec)) {
   case DecorationMemoryINTEL:
     SPIRVDecorateMemoryINTELAttr::encodeLiterals(Encoder, Literals);
     break;
@@ -155,7 +181,7 @@ void SPIRVMemberDecorate::encode(spv_ostream &O) const {
   case DecorationUserSemantic:
     SPIRVDecorateUserSemanticAttr::encodeLiterals(Encoder, Literals);
     break;
-  case DecorationFuncParamDescINTEL:
+  case internal::DecorationFuncParamDescINTEL:
     SPIRVDecorateFuncParamDescAttr::encodeLiterals(Encoder, Literals);
     break;
   default:
@@ -171,7 +197,7 @@ void SPIRVMemberDecorate::setWordCount(SPIRVWord Count) {
 void SPIRVMemberDecorate::decode(std::istream &I) {
   SPIRVDecoder Decoder = getDecoder(I);
   Decoder >> Target >> MemberNumber >> Dec;
-  switch (Dec) {
+  switch (static_cast<size_t>(Dec)) {
   case DecorationMemoryINTEL:
     SPIRVDecorateMemoryINTELAttr::decodeLiterals(Decoder, Literals);
     break;
@@ -181,7 +207,7 @@ void SPIRVMemberDecorate::decode(std::istream &I) {
   case DecorationUserSemantic:
     SPIRVDecorateUserSemanticAttr::decodeLiterals(Decoder, Literals);
     break;
-  case DecorationFuncParamDescINTEL:
+  case internal::DecorationFuncParamDescINTEL:
     SPIRVDecorateFuncParamDescAttr::decodeLiterals(Decoder, Literals);
     break;
   default:

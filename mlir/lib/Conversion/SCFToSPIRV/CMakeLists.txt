@@ -1,5 +1,6 @@
 add_mlir_conversion_library(MLIRSCFToSPIRV
   SCFToSPIRV.cpp
+  SCFToSPIRVPass.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Conversion/SCFToSPIRV
@@ -8,13 +9,13 @@ add_mlir_conversion_library(MLIRSCFToSPIRV
   MLIRConversionPassIncGen
 
   LINK_LIBS PUBLIC
-  MLIRAffineOps
-  MLIRAffineToStandard
+  MLIRMemRefToSPIRV
   MLIRSPIRV
+  MLIRSPIRVConversion
+  MLIRStandardToSPIRV
   MLIRIR
-  MLIRLinalgOps
   MLIRPass
-  MLIRStandardOps
+  MLIRStandard
   MLIRSupport
   MLIRTransforms
   )

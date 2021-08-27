@@ -8,6 +8,7 @@
 
 #include "token-sequence.h"
 #include "flang/Parser/characters.h"
+#include "flang/Parser/message.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace Fortran::parser {
@@ -159,7 +160,8 @@ TokenSequence &TokenSequence::ToLowerCase() {
   std::size_t atToken{0};
   for (std::size_t j{0}; j < chars;) {
     std::size_t nextStart{atToken + 1 < tokens ? start_[++atToken] : chars};
-    char *p{&char_[j]}, *limit{&char_[nextStart]};
+    char *p{&char_[j]};
+    char const *limit{char_.data() + nextStart};
     j = nextStart;
     if (IsDecimalDigit(*p)) {
       while (p < limit && IsDecimalDigit(*p)) {
@@ -274,13 +276,14 @@ void TokenSequence::Emit(CookedSource &cooked) const {
   cooked.PutProvenanceMappings(provenances_);
 }
 
-void TokenSequence::Dump(llvm::raw_ostream &o) const {
+llvm::raw_ostream &TokenSequence::Dump(llvm::raw_ostream &o) const {
   o << "TokenSequence has " << char_.size() << " chars; nextStart_ "
     << nextStart_ << '\n';
   for (std::size_t j{0}; j < start_.size(); ++j) {
     o << '[' << j << "] @ " << start_[j] << " '" << TokenAt(j).ToString()
       << "'\n";
   }
+  return o;
 }
 
 Provenance TokenSequence::GetTokenProvenance(
@@ -309,5 +312,26 @@ ProvenanceRange TokenSequence::GetIntervalProvenanceRange(
 
 ProvenanceRange TokenSequence::GetProvenanceRange() const {
   return GetIntervalProvenanceRange(0, start_.size());
+}
+
+const TokenSequence &TokenSequence::CheckBadFortranCharacters(
+    Messages &messages) const {
+  std::size_t tokens{SizeInTokens()};
+  for (std::size_t j{0}; j < tokens; ++j) {
+    CharBlock token{TokenAt(j)};
+    char ch{token.FirstNonBlank()};
+    if (ch != ' ' && !IsValidFortranTokenCharacter(ch)) {
+      if (ch == '!' && j == 0) {
+        // allow in !dir$
+      } else if (ch < ' ' || ch >= '\x7f') {
+        messages.Say(GetTokenProvenanceRange(j),
+            "bad character (0x%02x) in Fortran token"_err_en_US, ch & 0xff);
+      } else {
+        messages.Say(GetTokenProvenanceRange(j),
+            "bad character ('%c') in Fortran token"_err_en_US, ch);
+      }
+    }
+  }
+  return *this;
 }
 } // namespace Fortran::parser

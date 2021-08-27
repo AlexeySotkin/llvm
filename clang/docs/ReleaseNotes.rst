@@ -1,5 +1,5 @@
 ========================================
-Clang 12.0.0 (In-Progress) Release Notes
+Clang 14.0.0 (In-Progress) Release Notes
 ========================================
 
 .. contents::
@@ -10,7 +10,7 @@ Written by the `LLVM Team <https://llvm.org/>`_
 
 .. warning::
 
-   These are in-progress notes for the upcoming Clang 12 release.
+   These are in-progress notes for the upcoming Clang 14 release.
    Release notes for previous releases can be found on
    `the Download Page <https://releases.llvm.org/download.html>`_.
 
@@ -18,7 +18,7 @@ Introduction
 ============
 
 This document contains the release notes for the Clang C/C++/Objective-C
-frontend, part of the LLVM Compiler Infrastructure, release 12.0.0. Here we
+frontend, part of the LLVM Compiler Infrastructure, release 14.0.0. Here we
 describe the status of Clang in some detail, including major
 improvements from the previous release and new feature work. For the
 general LLVM release notes, see `the LLVM
@@ -35,7 +35,7 @@ main Clang web page, this document applies to the *next* release, not
 the current one. To see the release notes for a specific release, please
 see the `releases page <https://llvm.org/releases/>`_.
 
-What's New in Clang 12.0.0?
+What's New in Clang 14.0.0?
 ===========================
 
 Some of the major new features and improvements to Clang are listed
@@ -46,7 +46,7 @@ sections with improvements to Clang's support for those languages.
 Major New Features
 ------------------
 
-- ...
+-  ...
 
 Improvements to Clang's diagnostics
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -63,42 +63,18 @@ New Compiler Flags
 
 - ...
 
-- -fpch-codegen and -fpch-debuginfo generate shared code and/or debuginfo
-  for contents of a precompiled header in a separate object file. This object
-  file needs to be linked in, but its contents do not need to be generated
-  for other objects using the precompiled header. This should usually save
-  compile time. If not using clang-cl, the separate object file needs to
-  be created explicitly from the precompiled header.
-  Example of use:
-
-  .. code-block:: console
-
-    $ clang++ -x c++-header header.h -o header.pch -fpch-codegen -fpch-debuginfo
-    $ clang++ -c header.pch -o shared.o
-    $ clang++ -c source.cpp -o source.o -include-pch header.pch
-    $ clang++ -o binary source.o shared.o
-
-  - Using -fpch-instantiate-templates when generating the precompiled header
-    usually increases the amount of code/debuginfo that can be shared.
-  - In some cases, especially when building with optimizations enabled, using
-    -fpch-codegen may generate so much code in the shared object that compiling
-    it may be a net loss in build time.
-  - Since headers may bring in private symbols of other libraries, it may be
-    sometimes necessary to discard unused symbols (such as by adding
-    -Wl,--gc-sections on ELF platforms to the linking command, and possibly
-    adding -fdata-sections -ffunction-sections to the command generating
-    the shared object).
-
 Deprecated Compiler Flags
 -------------------------
-
-The following options are deprecated and ignored. They will be removed in
-future versions of Clang.
 
 - ...
 
 Modified Compiler Flags
 -----------------------
+
+- ...
+
+Removed Compiler Flags
+-------------------------
 
 - ...
 
@@ -110,7 +86,13 @@ New Pragmas in Clang
 Attribute Changes in Clang
 --------------------------
 
-- ...
+- Attributes loaded as clang plugins which are sensitive to LangOpts must
+  now override ``acceptsLangOpts`` instead of ``diagLangOpts``.
+  Returning false will produce a generic "attribute ignored" diagnostic, as
+  with clang's built-in attributes.
+  If plugins want to provide richer diagnostics, they can do so when the
+  attribute is handled instead, e.g. in ``handleDeclAttribute``.
+  (This was changed in order to better support attributes in code completion).
 
 Windows Support
 ---------------
@@ -125,7 +107,11 @@ C++ Language Changes in Clang
 
 - ...
 
-C++1z Feature Support
+C++20 Feature Support
+^^^^^^^^^^^^^^^^^^^^^
+...
+
+C++2b Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
 ...
 
@@ -150,20 +136,18 @@ CUDA Support in Clang
 
 - ...
 
-Internal API Changes
+X86 Support in Clang
 --------------------
 
-These are major API changes that have happened since the 11.0.0 release of
-Clang. If upgrading an external codebase that uses Clang as a library,
-this section should help get you past the largest hurdles of upgrading.
+- Support for ``AVX512-FP16`` instructions has been added.
+
+Internal API Changes
+--------------------
 
 - ...
 
 Build System Changes
 --------------------
-
-These are major changes to the build system that have happened since the 11.0.0
-release of Clang. Users of the build system should adjust accordingly.
 
 - ...
 
@@ -175,33 +159,8 @@ AST Matchers
 clang-format
 ------------
 
-- Option ``BitFieldColonSpacing`` has been added that decides how
-  space should be added around identifier, colon and bit-width in
-  bitfield definitions.
-
-  .. code-block:: c++
-
-    // Both (default)
-    struct F {
-      unsigned dscp : 6;
-      unsigned ecn  : 2; // AlignConsecutiveBitFields=true
-    };
-    // None
-    struct F {
-      unsigned dscp:6;
-      unsigned ecn :2;
-    };
-    // Before
-    struct F {
-      unsigned dscp :6;
-      unsigned ecn  :2;
-    };
-    // After
-    struct F {
-      unsigned dscp: 6;
-      unsigned ecn : 2;
-    };
-
+- Option ``AllowShortEnumsOnASingleLine: false`` has been improved, it now
+  correctly places the opening brace according to ``BraceWrapping.AfterEnum``.
 
 libclang
 --------

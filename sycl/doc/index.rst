@@ -8,6 +8,7 @@ Using oneAPI DPC++ for Application Development
    :maxdepth: 1
 
    GetStartedGuide
+   Getting Started (Japanese) <https://www.isus.jp/others/get-started-with-oneapi-dpc/>
    UsersManual
    PreprocessorMacros
    cuda/contents
@@ -22,8 +23,20 @@ Developing oneAPI DPC++ Compiler
    :maxdepth: 1
 
    API Reference <https://intel.github.io/llvm-docs/doxygen>
+   Clang Documentation <https://intel.github.io/llvm-docs/clang>
+   Clang API Reference <https://intel.github.io/llvm-docs/clang_doxygen>
    CompilerAndRuntimeDesign
    KernelParameterPassing
    EnvironmentVariables
    PluginInterface
    ABIPolicyGuide
+   SpecializationConstants
+   KernelProgramCache
+   GlobalObjectsInRuntime
+   LinkedAllocations
+   Assert
+   SharedLibraries
+   MultiTileCardWithLevelZero
+   OptionalDeviceFeatures
+   SYCLInstrumentationUsingXPTI
+

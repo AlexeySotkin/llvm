@@ -41,7 +41,8 @@
 #define SPIRV_LIBSPIRV_SPIRVOPCODE_H
 
 #include "SPIRVUtil.h"
-#include "spirv.hpp"
+#include "spirv/unified1/spirv.hpp"
+#include "spirv_internal.hpp"
 #include <string>
 
 using namespace spv;
@@ -49,16 +50,24 @@ namespace SPIRV {
 
 template <> inline void SPIRVMap<Op, std::string>::init() {
 #define _SPIRV_OP(x, ...) add(Op##x, #x);
+#define _SPIRV_OP_INTERNAL(x, ...) add(internal::Op##x, #x);
 #include "SPIRVOpCodeEnum.h"
+#include "SPIRVOpCodeEnumInternal.h"
+#undef _SPIRV_OP_INTERNAL
 #undef _SPIRV_OP
 }
 SPIRV_DEF_NAMEMAP(Op, OpCodeNameMap)
 
+inline bool isFPAtomicOpCode(Op OpCode) {
+  return OpCode == OpAtomicFAddEXT || OpCode == OpAtomicFMinEXT ||
+         OpCode == OpAtomicFMaxEXT;
+}
 inline bool isAtomicOpCode(Op OpCode) {
   static_assert(OpAtomicLoad < OpAtomicXor, "");
   return ((unsigned)OpCode >= OpAtomicLoad &&
           (unsigned)OpCode <= OpAtomicXor) ||
-         OpCode == OpAtomicFlagTestAndSet || OpCode == OpAtomicFlagClear;
+         OpCode == OpAtomicFlagTestAndSet || OpCode == OpAtomicFlagClear ||
+         isFPAtomicOpCode(OpCode);
 }
 inline bool isBinaryOpCode(Op OpCode) {
   return ((unsigned)OpCode >= OpIAdd && (unsigned)OpCode <= OpFMod) ||
@@ -109,6 +118,10 @@ inline bool isCvtToUnsignedOpCode(Op OpCode) {
 inline bool isCvtFromUnsignedOpCode(Op OpCode) {
   return OpCode == OpConvertUToF || OpCode == OpUConvert ||
          OpCode == OpSatConvertUToS;
+}
+
+inline bool isSatCvtOpCode(Op OpCode) {
+  return OpCode == OpSatConvertUToS || OpCode == OpSatConvertSToU;
 }
 
 inline bool isOpaqueGenericTypeOpCode(Op OpCode) {
@@ -196,10 +209,13 @@ inline bool isSubgroupAvcINTELEvaluateOpcode(Op OpCode) {
           OC <= OpSubgroupAvcSicEvaluateWithMultiReferenceInterlacedINTEL);
 }
 
+inline bool isVCOpCode(Op OpCode) { return OpCode == OpTypeBufferSurfaceINTEL; }
+
 inline bool isTypeOpCode(Op OpCode) {
   unsigned OC = OpCode;
   return (OpTypeVoid <= OC && OC <= OpTypePipe) || OC == OpTypePipeStorage ||
-         isSubgroupAvcINTELTypeOpCode(OpCode) || OC == OpTypeVmeImageINTEL;
+         isSubgroupAvcINTELTypeOpCode(OpCode) || OC == OpTypeVmeImageINTEL ||
+         isVCOpCode(OpCode) || OC == internal::OpTypeTokenINTEL;
 }
 
 inline bool isSpecConstantOpCode(Op OpCode) {
@@ -210,7 +226,7 @@ inline bool isSpecConstantOpCode(Op OpCode) {
 inline bool isConstantOpCode(Op OpCode) {
   unsigned OC = OpCode;
   return (OpConstantTrue <= OC && OC <= OpSpecConstantOp) || OC == OpUndef ||
-         OC == OpConstantPipeStorage;
+         OC == OpConstantPipeStorage || OC == OpConstFunctionPointerINTEL;
 }
 
 inline bool isModuleScopeAllowedOpCode(Op OpCode) {
@@ -221,6 +237,10 @@ inline bool isModuleScopeAllowedOpCode(Op OpCode) {
 inline bool isIntelSubgroupOpCode(Op OpCode) {
   unsigned OC = OpCode;
   return OpSubgroupShuffleINTEL <= OC && OC <= OpSubgroupImageBlockWriteINTEL;
+}
+
+inline bool isEventOpCode(Op OpCode) {
+  return OpRetainEvent <= OpCode && OpCode <= OpCaptureEventProfilingInfo;
 }
 
 } // namespace SPIRV

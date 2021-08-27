@@ -8,7 +8,7 @@ Overview
 ========
 
 As one of the goals of SPIR-V is to `"map easily to other IRs, including LLVM
-IR" <https://cvs.khronos.org/svn/repos/SPIRV/trunk/specs/SPIRV.html#_goals>`_,
+IR" <https://www.khronos.org/registry/spir-v/specs/unified1/SPIRV.html#_goals>`_,
 most of SPIR-V entities (global variables, constants, types, functions, basic
 blocks, instructions) have straightforward counterparts in LLVM. Therefore the
 focus of this document is those entities in SPIR-V which do not map to LLVM in
@@ -81,7 +81,7 @@ Some SPIR-V instructions which can be included in basic blocks do not have
 corresponding LLVM instructions or intrinsics. These SPIR-V instructions are
 represented by function calls in LLVM. The function corresponding to a SPIR-V
 instruction is termed SPIR-V builtin function and its name is `IA64 mangled
-<https://mentorembedded.github.io/cxx-abi/abi.html#mangling>`_ with extensions
+<https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling>`_ with extensions
 for SPIR-V specific types. The unmangled name of a SPIR-V builtin function
 follows the convention
 
@@ -150,8 +150,17 @@ The unmangled names of SPIR-V builtin GenericCastToPtrExplicit function follow t
 .. code-block:: c
 
   __spirv_GenericCastToPtrExplicit_To{Global|Local|Private}
-  
-SPIR-V 1.1 Builtin CreatePipeFromPipeStorage Function Name 
+
+SPIR-V Builtin BuildNDRange Function Name
+----------------------------------------
+
+The unmangled names of SPIR-V builtin BuildNDRange functions follow the convention:
+
+.. code-block:: c
+
+  __spirv_{BuildNDRange}_{1|2|3}D
+
+SPIR-V 1.1 Builtin CreatePipeFromPipeStorage Function Name
 ----------------------------------------
 
 The unmangled names of SPIR-V builtin CreatePipeFromPipeStorage function follow the convention:
@@ -209,7 +218,7 @@ following format:
 
 .. code-block:: llvm
 
-  !spirv.<OpCodeName> = !{!<InstructionMetadata1>, <InstructionMetadata2>, ..}
+  !spirv.<OpCodeName> = !{!<InstructionMetadata1>, !<InstructionMetadata2>, ..}
   !<InstructionMetadata1> = !{<Operand1>, <Operand2>, ..}
   !<InstructionMetadata2> = !{<Operand1>, <Operand2>, ..}
 

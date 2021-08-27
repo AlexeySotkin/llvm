@@ -39,6 +39,12 @@ else:
     # force it load the default configuration.
     config.environment['SYCL_CONFIG_FILE_NAME'] = "null.cfg"
 
+if 'SYCL_DEVICELIB_NO_FALLBACK' in os.environ:
+    config.environment['SYCL_DEVICELIB_NO_FALLBACK'] = os.environ['SYCL_DEVICELIB_NO_FALLBACK']
+else:
+    # Disable device library fallback for unit tests by default.
+    config.environment['SYCL_DEVICELIB_NO_FALLBACK'] = "1"
+
 # Propagate path to symbolizer for ASan/MSan.
 for symbolizer in ['ASAN_SYMBOLIZER_PATH', 'MSAN_SYMBOLIZER_PATH']:
     if symbolizer in os.environ:
@@ -67,5 +73,7 @@ else:
     lit_config.warning("unable to inject shared library path on '{}'"
                        .format(platform.system()))
 
-config.environment['SYCL_BE'] = lit_config.params.get('SYCL_BE', "PI_OPENCL")
-lit_config.note("Backend (SYCL_BE): {}".format(config.environment['SYCL_BE']))
+config.environment['SYCL_CACHE_DIR'] = config.llvm_obj_root + "/sycl_cache"
+config.environment['SYCL_DEVICE_FILTER'] = lit_config.params.get('SYCL_PLUGIN', "opencl") + ",host"
+lit_config.note("Backend: {}".format(config.environment['SYCL_DEVICE_FILTER']))
+lit_config.note("SYCL cache directory: {}".format(config.environment['SYCL_CACHE_DIR']))

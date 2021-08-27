@@ -10,7 +10,11 @@
 #include <CL/sycl/backend_types.hpp>
 #include <CL/sycl/detail/common.hpp>
 #include <CL/sycl/detail/pi.hpp>
+#include <CL/sycl/detail/type_traits.hpp>
 #include <CL/sycl/stl.hpp>
+#include <detail/plugin_printers.hpp>
+#include <memory>
+#include <mutex>
 
 #ifdef XPTI_ENABLE_INSTRUMENTATION
 // Include the headers necessary for emitting traces using the trace framework
@@ -22,7 +26,62 @@ namespace sycl {
 namespace detail {
 #ifdef XPTI_ENABLE_INSTRUMENTATION
 extern xpti::trace_event_data_t *GPICallEvent;
+extern xpti::trace_event_data_t *GPIArgCallEvent;
 #endif
+
+template <PiApiKind Kind, size_t Idx, typename... Args>
+struct array_fill_helper;
+
+template <PiApiKind Kind> struct PiApiArgTuple;
+
+#define _PI_API(api)                                                           \
+  template <> struct PiApiArgTuple<PiApiKind::api> {                           \
+    using type = typename function_traits<decltype(api)>::args_type;           \
+  };
+
+#include <CL/sycl/detail/pi.def>
+#undef _PI_API
+
+template <PiApiKind Kind, size_t Idx, typename T>
+struct array_fill_helper<Kind, Idx, T> {
+  static void fill(unsigned char *Dst, T &&Arg) {
+    using ArgsTuple = typename PiApiArgTuple<Kind>::type;
+    // C-style cast is required here.
+    auto RealArg = (std::tuple_element_t<Idx, ArgsTuple>)(Arg);
+    *(std::remove_cv_t<std::tuple_element_t<Idx, ArgsTuple>> *)Dst = RealArg;
+  }
+};
+
+template <PiApiKind Kind, size_t Idx, typename T, typename... Args>
+struct array_fill_helper<Kind, Idx, T, Args...> {
+  static void fill(unsigned char *Dst, const T &&Arg, Args &&... Rest) {
+    using ArgsTuple = typename PiApiArgTuple<Kind>::type;
+    // C-style cast is required here.
+    auto RealArg = (std::tuple_element_t<Idx, ArgsTuple>)(Arg);
+    *(std::remove_cv_t<std::tuple_element_t<Idx, ArgsTuple>> *)Dst = RealArg;
+    array_fill_helper<Kind, Idx + 1, Args...>::fill(
+        Dst + sizeof(decltype(RealArg)), std::forward<Args>(Rest)...);
+  }
+};
+
+template <typename... Ts>
+constexpr size_t totalSize(const std::tuple<Ts...> &) {
+  return (sizeof(Ts) + ...);
+}
+
+template <PiApiKind Kind, typename... ArgsT>
+auto packCallArguments(ArgsT &&... Args) {
+  using ArgsTuple = typename PiApiArgTuple<Kind>::type;
+
+  constexpr size_t TotalSize = totalSize(ArgsTuple{});
+
+  std::array<unsigned char, TotalSize> ArgsData;
+  array_fill_helper<Kind, 0, ArgsT...>::fill(ArgsData.data(),
+                                             std::forward<ArgsT>(Args)...);
+
+  return ArgsData;
+}
+
 /// The plugin class provides a unified interface to the underlying low-level
 /// runtimes for the device-agnostic SYCL runtime.
 ///
@@ -31,8 +90,9 @@ class plugin {
 public:
   plugin() = delete;
 
-  plugin(RT::PiPlugin Plugin, backend UseBackend)
-      : MPlugin(Plugin), MBackend(UseBackend) {}
+  plugin(RT::PiPlugin Plugin, backend UseBackend, void *LibraryHandle)
+      : MPlugin(Plugin), MBackend(UseBackend), MLibraryHandle(LibraryHandle),
+        TracingMutex(std::make_shared<std::mutex>()) {}
 
   plugin &operator=(const plugin &) = default;
   plugin(const plugin &) = default;
@@ -49,7 +109,16 @@ public:
   /// \throw Exception if pi_result is not a PI_SUCCESS.
   template <typename Exception = cl::sycl::runtime_error>
   void checkPiResult(RT::PiResult pi_result) const {
-    CHECK_OCL_CODE_THROW(pi_result, Exception);
+    __SYCL_CHECK_OCL_CODE_THROW(pi_result, Exception);
+  }
+
+  void reportPiError(RT::PiResult pi_result, const char *context) const {
+    if (pi_result != PI_SUCCESS) {
+      throw cl::sycl::runtime_error(
+          std::string(context) + " API failed with error: " +
+              cl::sycl::detail::codeToString(pi_result),
+          pi_result);
+    }
   }
 
   /// Calls the PiApi, traces the call, and returns the result.
@@ -62,6 +131,7 @@ public:
   /// \endcode
   ///
   /// \sa plugin::checkPiResult
+
   template <PiApiKind PiApiOffset, typename... ArgsT>
   RT::PiResult call_nocheck(ArgsT... Args) const {
     RT::PiFuncInfo<PiApiOffset> PiCallInfo;
@@ -69,22 +139,33 @@ public:
     // Emit a function_begin trace for the PI API before the call is executed.
     // If arguments need to be captured, then a data structure can be sent in
     // the per_instance_user_data field.
-    std::string PIFnName = PiCallInfo.getFuncName();
-    uint64_t CorrelationID = pi::emitFunctionBeginTrace(PIFnName.c_str());
+    const char *PIFnName = PiCallInfo.getFuncName();
+    uint64_t CorrelationID = pi::emitFunctionBeginTrace(PIFnName);
+    auto ArgsData =
+        packCallArguments<PiApiOffset>(std::forward<ArgsT>(Args)...);
+    uint64_t CorrelationIDWithArgs = pi::emitFunctionWithArgsBeginTrace(
+        static_cast<uint32_t>(PiApiOffset), PIFnName, ArgsData.data(), MPlugin);
 #endif
+    RT::PiResult R;
     if (pi::trace(pi::TraceLevel::PI_TRACE_CALLS)) {
-      std::string FnName = PiCallInfo.getFuncName();
+      std::lock_guard<std::mutex> Guard(*TracingMutex);
+      const char *FnName = PiCallInfo.getFuncName();
       std::cout << "---> " << FnName << "(" << std::endl;
       RT::printArgs(Args...);
-    }
-    RT::PiResult R = PiCallInfo.getFuncPtr(MPlugin)(Args...);
-    if (pi::trace(pi::TraceLevel::PI_TRACE_CALLS)) {
+      R = PiCallInfo.getFuncPtr(MPlugin)(Args...);
       std::cout << ") ---> ";
       RT::printArgs(R);
+      RT::printOuts(Args...);
+      std::cout << std::endl;
+    } else {
+      R = PiCallInfo.getFuncPtr(MPlugin)(Args...);
     }
 #ifdef XPTI_ENABLE_INSTRUMENTATION
     // Close the function begin with a call to function end
-    pi::emitFunctionEndTrace(CorrelationID, PIFnName.c_str());
+    pi::emitFunctionEndTrace(CorrelationID, PIFnName);
+    pi::emitFunctionWithArgsEndTrace(CorrelationIDWithArgs,
+                                     static_cast<uint32_t>(PiApiOffset),
+                                     PIFnName, ArgsData.data(), R, MPlugin);
 #endif
     return R;
   }
@@ -99,10 +180,15 @@ public:
   }
 
   backend getBackend(void) const { return MBackend; }
+  void *getLibraryHandle() const { return MLibraryHandle; }
+  void *getLibraryHandle() { return MLibraryHandle; }
+  int unload() { return RT::unloadPlugin(MLibraryHandle); }
 
 private:
   RT::PiPlugin MPlugin;
   backend MBackend;
+  void *MLibraryHandle; // the handle returned from dlopen
+  std::shared_ptr<std::mutex> TracingMutex;
 }; // class plugin
 } // namespace detail
 } // namespace sycl

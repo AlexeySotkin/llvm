@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_DEBUGINFO_DWARFFORMVALUE_H
-#define LLVM_DEBUGINFO_DWARFFORMVALUE_H
+#ifndef LLVM_DEBUGINFO_DWARF_DWARFFORMVALUE_H
+#define LLVM_DEBUGINFO_DWARF_DWARFFORMVALUE_H
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/None.h"
@@ -82,6 +82,9 @@ public:
   void dump(raw_ostream &OS, DIDumpOptions DumpOpts = DIDumpOptions()) const;
   void dumpSectionedAddress(raw_ostream &OS, DIDumpOptions DumpOpts,
                             object::SectionedAddress SA) const;
+  void dumpAddress(raw_ostream &OS, uint64_t Address) const;
+  static void dumpAddress(raw_ostream &OS, uint8_t AddressSize,
+                          uint64_t Address);
   static void dumpAddressSection(const DWARFObject &Obj, raw_ostream &OS,
                                  DIDumpOptions DumpOpts, uint64_t SectionIndex);
 
@@ -97,10 +100,6 @@ public:
   bool extractValue(const DWARFDataExtractor &Data, uint64_t *OffsetPtr,
                     dwarf::FormParams FormParams, const DWARFUnit *U) {
     return extractValue(Data, OffsetPtr, FormParams, nullptr, U);
-  }
-
-  bool isInlinedCStr() const {
-    return Value.data != nullptr && Value.data == (const uint8_t *)Value.cstr;
   }
 
   /// getAsFoo functions below return the extracted value as Foo if only
@@ -320,4 +319,4 @@ inline Optional<ArrayRef<uint8_t>> toBlock(const Optional<DWARFFormValue> &V) {
 
 } // end namespace llvm
 
-#endif // LLVM_DEBUGINFO_DWARFFORMVALUE_H
+#endif // LLVM_DEBUGINFO_DWARF_DWARFFORMVALUE_H

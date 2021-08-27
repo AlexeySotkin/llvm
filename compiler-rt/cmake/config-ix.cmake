@@ -6,7 +6,7 @@ include(CheckLibraryExists)
 include(CheckSymbolExists)
 include(TestBigEndian)
 
-function(check_linker_flag flag out_var)
+function(compiler_rt_check_linker_flag flag out_var)
   cmake_push_check_state()
   set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} ${flag}")
   check_cxx_compiler_flag("" ${out_var})
@@ -17,6 +17,9 @@ check_library_exists(c fopen "" COMPILER_RT_HAS_LIBC)
 if (COMPILER_RT_USE_BUILTINS_LIBRARY)
   include(HandleCompilerRT)
   find_compiler_rt_library(builtins "" COMPILER_RT_BUILTINS_LIBRARY)
+  # TODO(PR51389): We should check COMPILER_RT_BUILTINS_LIBRARY and report an
+  # error if the value is NOTFOUND rather than silenty continuing but we first
+  # need to fix find_compiler_rt_library on Darwin.
 else()
   if (ANDROID)
     check_library_exists(gcc __gcc_personality_v0 "" COMPILER_RT_HAS_GCC_LIB)
@@ -32,7 +35,10 @@ if (COMPILER_RT_HAS_NODEFAULTLIBS_FLAG)
     list(APPEND CMAKE_REQUIRED_LIBRARIES c)
   endif ()
   if (COMPILER_RT_USE_BUILTINS_LIBRARY)
-    list(APPEND CMAKE_REQUIRED_LIBRARIES "${COMPILER_RT_BUILTINS_LIBRARY}")
+    # TODO: remote this check once we address PR51389.
+    if (${COMPILER_RT_BUILTINS_LIBRARY})
+      list(APPEND CMAKE_REQUIRED_LIBRARIES "${COMPILER_RT_BUILTINS_LIBRARY}")
+    endif()
   elseif (COMPILER_RT_HAS_GCC_S_LIB)
     list(APPEND CMAKE_REQUIRED_LIBRARIES gcc_s)
   elseif (COMPILER_RT_HAS_GCC_LIB)
@@ -108,6 +114,8 @@ check_cxx_compiler_flag("-Werror -Wunused-parameter"   COMPILER_RT_HAS_WUNUSED_P
 check_cxx_compiler_flag("-Werror -Wcovered-switch-default" COMPILER_RT_HAS_WCOVERED_SWITCH_DEFAULT_FLAG)
 check_cxx_compiler_flag("-Werror -Wsuggest-override"   COMPILER_RT_HAS_WSUGGEST_OVERRIDE_FLAG)
 check_cxx_compiler_flag(-Wno-pedantic COMPILER_RT_HAS_WNO_PEDANTIC)
+check_cxx_compiler_flag(-Wno-format COMPILER_RT_HAS_WNO_FORMAT)
+check_cxx_compiler_flag(-Wno-format-pedantic COMPILER_RT_HAS_WNO_FORMAT_PEDANTIC)
 
 check_cxx_compiler_flag(/W4 COMPILER_RT_HAS_W4_FLAG)
 check_cxx_compiler_flag(/WX COMPILER_RT_HAS_WX_FLAG)
@@ -123,6 +131,7 @@ check_symbol_exists(__func__ "" COMPILER_RT_HAS_FUNC_SYMBOL)
 
 # Includes.
 check_cxx_compiler_flag(-nostdinc++ COMPILER_RT_HAS_NOSTDINCXX_FLAG)
+check_cxx_compiler_flag(-nostdlib++ COMPILER_RT_HAS_NOSTDLIBXX_FLAG)
 check_include_files("sys/auxv.h"    COMPILER_RT_HAS_AUXV)
 
 # Libraries.
@@ -133,17 +142,18 @@ check_library_exists(pthread pthread_create "" COMPILER_RT_HAS_LIBPTHREAD)
 check_library_exists(execinfo backtrace "" COMPILER_RT_HAS_LIBEXECINFO)
 
 # Look for terminfo library, used in unittests that depend on LLVMSupport.
+if(LLVM_ENABLE_TERMINFO STREQUAL FORCE_ON)
+  set(MAYBE_REQUIRED REQUIRED)
+else()
+  set(MAYBE_REQUIRED)
+endif()
 if(LLVM_ENABLE_TERMINFO)
-  foreach(library terminfo tinfo curses ncurses ncursesw)
-    string(TOUPPER ${library} library_suffix)
-    check_library_exists(
-      ${library} setupterm "" COMPILER_RT_HAS_TERMINFO_${library_suffix})
-    if(COMPILER_RT_HAS_TERMINFO_${library_suffix})
-      set(COMPILER_RT_HAS_TERMINFO TRUE)
-      set(COMPILER_RT_TERMINFO_LIB "${library}")
-      break()
-    endif()
-  endforeach()
+  find_library(COMPILER_RT_TERMINFO_LIB NAMES terminfo tinfo curses ncurses ncursesw ${MAYBE_REQUIRED})
+endif()
+if(COMPILER_RT_TERMINFO_LIB)
+  set(LLVM_ENABLE_TERMINFO 1)
+else()
+  set(LLVM_ENABLE_TERMINFO 0)
 endif()
 
 if (ANDROID AND COMPILER_RT_HAS_LIBDL)
@@ -154,11 +164,24 @@ check_library_exists(c++ __cxa_throw "" COMPILER_RT_HAS_LIBCXX)
 check_library_exists(stdc++ __cxa_throw "" COMPILER_RT_HAS_LIBSTDCXX)
 
 # Linker flags.
-check_linker_flag("-Wl,-z,text" COMPILER_RT_HAS_Z_TEXT)
-check_linker_flag("-fuse-ld=lld" COMPILER_RT_HAS_FUSE_LD_LLD_FLAG)
+compiler_rt_check_linker_flag("-Wl,-z,text" COMPILER_RT_HAS_Z_TEXT)
+compiler_rt_check_linker_flag("-fuse-ld=lld" COMPILER_RT_HAS_FUSE_LD_LLD_FLAG)
+
+set(VERS_COMPAT_OPTION "-Wl,-z,gnu-version-script-compat")
+compiler_rt_check_linker_flag("${VERS_COMPAT_OPTION}" COMPILER_RT_HAS_GNU_VERSION_SCRIPT_COMPAT)
+
+set(DUMMY_VERS ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CMakeTmp/dummy.vers)
+file(WRITE ${DUMMY_VERS} "{};")
+set(VERS_OPTION "-Wl,--version-script,${DUMMY_VERS}")
+if(COMPILER_RT_HAS_GNU_VERSION_SCRIPT_COMPAT)
+  # Solaris 11.4 ld only supports --version-script with
+  # -z gnu-version-script-compat.
+  string(APPEND VERS_OPTION " ${VERS_COMPAT_OPTION}")
+endif()
+compiler_rt_check_linker_flag("${VERS_OPTION}" COMPILER_RT_HAS_VERSION_SCRIPT)
 
 if(ANDROID)
-  check_linker_flag("-Wl,-z,global" COMPILER_RT_HAS_Z_GLOBAL)
+  compiler_rt_check_linker_flag("-Wl,-z,global" COMPILER_RT_HAS_Z_GLOBAL)
   check_library_exists(log __android_log_write "" COMPILER_RT_HAS_LIBLOG)
 endif()
 
@@ -204,7 +227,7 @@ endfunction()
 # specific architecture.  When cross-compiling, this is controled via
 # COMPILER_RT_TEST_COMPILER and COMPILER_RT_TEST_COMPILER_CFLAGS.
 macro(get_test_cc_for_arch arch cc_out cflags_out)
-  if(ANDROID OR ${arch} MATCHES "arm|aarch64")
+  if(ANDROID OR ${arch} MATCHES "arm|aarch64|riscv32|riscv64")
     # This is only true if we are cross-compiling.
     # Build all tests with host compiler and use host tools.
     set(${cc_out} ${COMPILER_RT_TEST_COMPILER})
@@ -256,74 +279,7 @@ function(is_valid_apple_platform platform is_valid_out)
   set(${is_valid_out} ${is_valid} PARENT_SCOPE)
 endfunction()
 
-set(ARM64 aarch64)
-set(ARM32 arm armhf)
-set(HEXAGON hexagon)
-set(X86 i386)
-set(X86_64 x86_64)
-set(MIPS32 mips mipsel)
-set(MIPS64 mips64 mips64el)
-set(PPC64 powerpc64 powerpc64le)
-set(RISCV32 riscv32)
-set(RISCV64 riscv64)
-set(S390X s390x)
-set(SPARC sparc)
-set(SPARCV9 sparcv9)
-set(WASM32 wasm32)
-set(WASM64 wasm64)
-
-if(APPLE)
-  set(ARM64 arm64)
-  set(ARM32 armv7 armv7s armv7k)
-  set(X86_64 x86_64 x86_64h)
-endif()
-
-set(ALL_SANITIZER_COMMON_SUPPORTED_ARCH ${X86} ${X86_64} ${PPC64} ${RISCV64}
-    ${ARM32} ${ARM64} ${MIPS32} ${MIPS64} ${S390X} ${SPARC} ${SPARCV9})
-set(ALL_ASAN_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64}
-    ${MIPS32} ${MIPS64} ${PPC64} ${S390X} ${SPARC} ${SPARCV9})
-set(ALL_CRT_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64} ${RISCV32} ${RISCV64})
-set(ALL_DFSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64})
-
-if(ANDROID)
-  set(OS_NAME "Android")
-else()
-  set(OS_NAME "${CMAKE_SYSTEM_NAME}")
-endif()
-
-if(OS_NAME MATCHES "Linux")
-  set(ALL_FUZZER_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM64})
-elseif (OS_NAME MATCHES "Windows")
-  set(ALL_FUZZER_SUPPORTED_ARCH ${X86} ${X86_64})
-elseif(OS_NAME MATCHES "Android")
-  set(ALL_FUZZER_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64})
-else()
-  set(ALL_FUZZER_SUPPORTED_ARCH ${X86_64} ${ARM64})
-endif()
-
-set(ALL_GWP_ASAN_SUPPORTED_ARCH ${X86} ${X86_64})
-if(APPLE)
-  set(ALL_LSAN_SUPPORTED_ARCH ${X86} ${X86_64} ${MIPS64} ${ARM64})
-else()
-  set(ALL_LSAN_SUPPORTED_ARCH ${X86} ${X86_64} ${MIPS64} ${ARM64} ${ARM32} ${PPC64} ${S390X})
-endif()
-set(ALL_MSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64} ${PPC64} ${S390X})
-set(ALL_HWASAN_SUPPORTED_ARCH ${X86_64} ${ARM64})
-set(ALL_PROFILE_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64} ${PPC64}
-    ${MIPS32} ${MIPS64} ${S390X} ${SPARC} ${SPARCV9})
-set(ALL_TSAN_SUPPORTED_ARCH ${X86_64} ${MIPS64} ${ARM64} ${PPC64})
-set(ALL_UBSAN_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64} ${RISCV64}
-    ${MIPS32} ${MIPS64} ${PPC64} ${S390X} ${SPARC} ${SPARCV9})
-set(ALL_SAFESTACK_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM64} ${MIPS32} ${MIPS64})
-set(ALL_CFI_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64} ${MIPS64})
-set(ALL_SCUDO_SUPPORTED_ARCH ${X86} ${X86_64} ${ARM32} ${ARM64} ${MIPS32} ${MIPS64} ${PPC64})
-set(ALL_SCUDO_STANDALONE_SUPPORTED_ARCH ${X86} ${X86_64})
-if(APPLE)
-set(ALL_XRAY_SUPPORTED_ARCH ${X86_64})
-else()
-set(ALL_XRAY_SUPPORTED_ARCH ${X86_64} ${ARM32} ${ARM64} ${MIPS32} ${MIPS64} powerpc64le)
-endif()
-set(ALL_SHADOWCALLSTACK_SUPPORTED_ARCH ${ARM64})
+include(AllSupportedArchDefs)
 
 if(APPLE)
   include(CompilerRTDarwinUtils)
@@ -381,6 +337,7 @@ if(APPLE)
   set(TSAN_SUPPORTED_OS osx)
   set(XRAY_SUPPORTED_OS osx)
   set(FUZZER_SUPPORTED_OS osx)
+  set(ORC_SUPPORTED_OS osx)
 
   # Note: In order to target x86_64h on OS X the minimum deployment target must
   # be 10.8 or higher.
@@ -414,7 +371,7 @@ if(APPLE)
     -lc++
     -lc++abi)
 
-  check_linker_flag("-fapplication-extension" COMPILER_RT_HAS_APP_EXTENSION)
+  compiler_rt_check_linker_flag("-fapplication-extension" COMPILER_RT_HAS_APP_EXTENSION)
   if(COMPILER_RT_HAS_APP_EXTENSION)
     list(APPEND DARWIN_COMMON_LINK_FLAGS "-fapplication-extension")
   endif()
@@ -536,6 +493,9 @@ if(APPLE)
   list_intersect(HWASAN_SUPPORTED_ARCH
     ALL_HWASAN_SUPPORTED_ARCH
     SANITIZER_COMMON_SUPPORTED_ARCH)
+  list_intersect(MEMPROF_SUPPORTED_ARCH
+    ALL_MEMPROF_SUPPORTED_ARCH
+    SANITIZER_COMMON_SUPPORTED_ARCH)
   list_intersect(PROFILE_SUPPORTED_ARCH
     ALL_PROFILE_SUPPORTED_ARCH
     SANITIZER_COMMON_SUPPORTED_ARCH)
@@ -566,6 +526,9 @@ if(APPLE)
   list_intersect(SHADOWCALLSTACK_SUPPORTED_ARCH
     ALL_SHADOWCALLSTACK_SUPPORTED_ARCH
     SANITIZER_COMMON_SUPPORTED_ARCH)
+  list_intersect(ORC_SUPPORTED_ARCH
+    ALL_ORC_SUPPORTED_ARCH
+    SANITIZER_COMMON_SUPPORTED_ARCH)
 
 else()
   filter_available_targets(CRT_SUPPORTED_ARCH ${ALL_CRT_SUPPORTED_ARCH})
@@ -584,6 +547,7 @@ else()
   filter_available_targets(LSAN_SUPPORTED_ARCH ${ALL_LSAN_SUPPORTED_ARCH})
   filter_available_targets(MSAN_SUPPORTED_ARCH ${ALL_MSAN_SUPPORTED_ARCH})
   filter_available_targets(HWASAN_SUPPORTED_ARCH ${ALL_HWASAN_SUPPORTED_ARCH})
+  filter_available_targets(MEMPROF_SUPPORTED_ARCH ${ALL_MEMPROF_SUPPORTED_ARCH})
   filter_available_targets(PROFILE_SUPPORTED_ARCH ${ALL_PROFILE_SUPPORTED_ARCH})
   filter_available_targets(TSAN_SUPPORTED_ARCH ${ALL_TSAN_SUPPORTED_ARCH})
   filter_available_targets(UBSAN_SUPPORTED_ARCH ${ALL_UBSAN_SUPPORTED_ARCH})
@@ -596,6 +560,7 @@ else()
   filter_available_targets(SHADOWCALLSTACK_SUPPORTED_ARCH
     ${ALL_SHADOWCALLSTACK_SUPPORTED_ARCH})
   filter_available_targets(GWP_ASAN_SUPPORTED_ARCH ${ALL_GWP_ASAN_SUPPORTED_ARCH})
+  filter_available_targets(ORC_SUPPORTED_ARCH ${ALL_ORC_SUPPORTED_ARCH})
 endif()
 
 if (MSVC)
@@ -624,7 +589,7 @@ set(COMPILER_RT_SANITIZERS_TO_BUILD all CACHE STRING
 list_replace(COMPILER_RT_SANITIZERS_TO_BUILD all "${ALL_SANITIZERS}")
 
 if (SANITIZER_COMMON_SUPPORTED_ARCH AND NOT LLVM_USE_SANITIZER AND
-    (OS_NAME MATCHES "Android|Darwin|Linux|FreeBSD|NetBSD|OpenBSD|Fuchsia|SunOS" OR
+    (OS_NAME MATCHES "Android|Darwin|Linux|FreeBSD|NetBSD|Fuchsia|SunOS" OR
     (OS_NAME MATCHES "Windows" AND NOT CYGWIN AND
         (NOT MINGW OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"))))
   set(COMPILER_RT_HAS_SANITIZER_COMMON TRUE)
@@ -638,8 +603,7 @@ else()
   set(COMPILER_RT_HAS_INTERCEPTION FALSE)
 endif()
 
-if (COMPILER_RT_HAS_SANITIZER_COMMON AND ASAN_SUPPORTED_ARCH AND
-    NOT OS_NAME MATCHES "OpenBSD")
+if (COMPILER_RT_HAS_SANITIZER_COMMON AND ASAN_SUPPORTED_ARCH)
   set(COMPILER_RT_HAS_ASAN TRUE)
 else()
   set(COMPILER_RT_HAS_ASAN FALSE)
@@ -667,7 +631,7 @@ else()
 endif()
 
 if (COMPILER_RT_HAS_SANITIZER_COMMON AND LSAN_SUPPORTED_ARCH AND
-    OS_NAME MATCHES "Darwin|Linux|NetBSD|Fuchsia")
+    OS_NAME MATCHES "Android|Darwin|Linux|NetBSD|Fuchsia")
   set(COMPILER_RT_HAS_LSAN TRUE)
 else()
   set(COMPILER_RT_HAS_LSAN FALSE)
@@ -681,14 +645,21 @@ else()
 endif()
 
 if (COMPILER_RT_HAS_SANITIZER_COMMON AND HWASAN_SUPPORTED_ARCH AND
-    OS_NAME MATCHES "Linux|Android")
+    OS_NAME MATCHES "Linux|Android|Fuchsia")
   set(COMPILER_RT_HAS_HWASAN TRUE)
 else()
   set(COMPILER_RT_HAS_HWASAN FALSE)
 endif()
 
+if (COMPILER_RT_HAS_SANITIZER_COMMON AND MEMPROF_SUPPORTED_ARCH AND
+    OS_NAME MATCHES "Linux")
+  set(COMPILER_RT_HAS_MEMPROF TRUE)
+else()
+  set(COMPILER_RT_HAS_MEMPROF FALSE)
+endif()
+
 if (PROFILE_SUPPORTED_ARCH AND NOT LLVM_USE_SANITIZER AND
-    OS_NAME MATCHES "Darwin|Linux|FreeBSD|Windows|Android|Fuchsia|SunOS|NetBSD")
+    OS_NAME MATCHES "Darwin|Linux|FreeBSD|Windows|Android|Fuchsia|SunOS|NetBSD|AIX")
   set(COMPILER_RT_HAS_PROFILE TRUE)
 else()
   set(COMPILER_RT_HAS_PROFILE FALSE)
@@ -702,14 +673,14 @@ else()
 endif()
 
 if (COMPILER_RT_HAS_SANITIZER_COMMON AND UBSAN_SUPPORTED_ARCH AND
-    OS_NAME MATCHES "Darwin|Linux|FreeBSD|NetBSD|OpenBSD|Windows|Android|Fuchsia|SunOS")
+    OS_NAME MATCHES "Darwin|Linux|FreeBSD|NetBSD|Windows|Android|Fuchsia|SunOS")
   set(COMPILER_RT_HAS_UBSAN TRUE)
 else()
   set(COMPILER_RT_HAS_UBSAN FALSE)
 endif()
 
 if (COMPILER_RT_HAS_SANITIZER_COMMON AND UBSAN_SUPPORTED_ARCH AND
-    OS_NAME MATCHES "Linux|FreeBSD|NetBSD|OpenBSD|Android|Darwin")
+    OS_NAME MATCHES "Linux|FreeBSD|NetBSD|Android|Darwin")
   set(COMPILER_RT_HAS_UBSAN_MINIMAL TRUE)
 else()
   set(COMPILER_RT_HAS_UBSAN_MINIMAL FALSE)
@@ -744,14 +715,20 @@ else()
 endif()
 
 if (COMPILER_RT_HAS_SANITIZER_COMMON AND XRAY_SUPPORTED_ARCH AND
-    OS_NAME MATCHES "Darwin|Linux|FreeBSD|NetBSD|OpenBSD|Fuchsia")
+    OS_NAME MATCHES "Darwin|Linux|FreeBSD|NetBSD|Fuchsia")
   set(COMPILER_RT_HAS_XRAY TRUE)
 else()
   set(COMPILER_RT_HAS_XRAY FALSE)
 endif()
 
+if (ORC_SUPPORTED_ARCH)
+  set(COMPILER_RT_HAS_ORC TRUE)
+else()
+  set(COMPILER_RT_HAS_ORC FALSE)
+endif()
+
 if (COMPILER_RT_HAS_SANITIZER_COMMON AND FUZZER_SUPPORTED_ARCH AND
-    OS_NAME MATCHES "Android|Darwin|Linux|NetBSD|FreeBSD|OpenBSD|Fuchsia|Windows")
+    OS_NAME MATCHES "Android|Darwin|Linux|NetBSD|FreeBSD|Fuchsia|Windows")
   set(COMPILER_RT_HAS_FUZZER TRUE)
 else()
   set(COMPILER_RT_HAS_FUZZER FALSE)
@@ -769,7 +746,7 @@ endif()
 # calling malloc on first use.
 # TODO(hctim): Enable this on Android again. Looks like it's causing a SIGSEGV
 # for Scudo and GWP-ASan, further testing needed.
-if (COMPILER_RT_HAS_SANITIZER_COMMON AND GWP_ASAN_SUPPORTED_ARCH AND
+if (GWP_ASAN_SUPPORTED_ARCH AND COMPILER_RT_BUILD_GWP_ASAN AND
     OS_NAME MATCHES "Linux")
   set(COMPILER_RT_HAS_GWP_ASAN TRUE)
 else()

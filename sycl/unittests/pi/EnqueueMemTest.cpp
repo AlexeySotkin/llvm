@@ -50,11 +50,11 @@ protected:
                   _context, _device, 0, &_queue)),
               PI_SUCCESS);
 
-    ASSERT_EQ(
-        (plugin.call_nocheck<detail::PiApiKind::piMemBufferCreate>(
-            _context, PI_MEM_FLAGS_ACCESS_RW,
-            _numElementsX * _numElementsY * sizeof(pi_int32), nullptr, &_mem)),
-        PI_SUCCESS);
+    ASSERT_EQ((plugin.call_nocheck<detail::PiApiKind::piMemBufferCreate>(
+                  _context, PI_MEM_FLAGS_ACCESS_RW,
+                  _numElementsX * _numElementsY * sizeof(pi_int32), nullptr,
+                  &_mem, nullptr)),
+              PI_SUCCESS);
   }
 
   void TearDown() override {
@@ -73,6 +73,12 @@ protected:
   template <typename T> void TestBufferFill(const T &pattern) {
 
     detail::plugin plugin = GetParam();
+
+    if (plugin.getBackend() == sycl::backend::rocm && sizeof(T) > 4) {
+      std::cerr << "ROCm plugin doesn't support patterns larger than 4 bytes, "
+                   "skipping\n";
+      GTEST_SKIP();
+    }
 
     T inValues[_numElementsX] = {};
 
@@ -105,10 +111,9 @@ protected:
   }
 };
 
-static std::vector<detail::plugin> Plugins = pi::initializeAndRemoveInvalid();
-
 INSTANTIATE_TEST_CASE_P(
-    EnqueueMemTestImpl, EnqueueMemTest, testing::ValuesIn(Plugins),
+    EnqueueMemTestImpl, EnqueueMemTest,
+    testing::ValuesIn(pi::initializeAndRemoveInvalid()),
     [](const testing::TestParamInfo<EnqueueMemTest::ParamType> &info) {
       return pi::GetBackendString(info.param.getBackend());
     });

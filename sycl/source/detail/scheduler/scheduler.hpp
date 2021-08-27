@@ -10,13 +10,15 @@
 
 #include <CL/sycl/detail/cg.hpp>
 #include <CL/sycl/detail/sycl_mem_obj_i.hpp>
-#include <detail/circular_buffer.hpp>
 #include <detail/scheduler/commands.hpp>
+#include <detail/scheduler/leaves_collection.hpp>
 
 #include <cstddef>
 #include <memory>
+#include <queue>
 #include <set>
 #include <shared_mutex>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -166,6 +168,9 @@
 /// clReleaseContext(ContextCPU);
 /// \endcode
 
+// For testing purposes
+class MockScheduler;
+
 __SYCL_INLINE_NAMESPACE(cl) {
 namespace sycl {
 namespace detail {
@@ -186,18 +191,19 @@ using ContextImplPtr = std::shared_ptr<detail::context_impl>;
 ///
 /// \ingroup sycl_graph
 struct MemObjRecord {
-  MemObjRecord(ContextImplPtr CurContext, std::size_t LeafLimit)
-      : MReadLeaves{LeafLimit}, MWriteLeaves{LeafLimit}, MCurContext{
-                                                             CurContext} {}
+  MemObjRecord(ContextImplPtr Ctx, std::size_t LeafLimit,
+               LeavesCollection::AllocateDependencyF AllocateDependency)
+      : MReadLeaves{this, LeafLimit, AllocateDependency},
+        MWriteLeaves{this, LeafLimit, AllocateDependency}, MCurContext{Ctx} {}
 
   // Contains all allocation commands for the memory object.
   std::vector<AllocaCommandBase *> MAllocaCommands;
 
   // Contains latest read only commands working with memory object.
-  CircularBuffer<Command *> MReadLeaves;
+  LeavesCollection MReadLeaves;
 
   // Contains latest write commands working with memory object.
-  CircularBuffer<Command *> MWriteLeaves;
+  LeavesCollection MWriteLeaves;
 
   // The context which has the latest state of the memory object.
   ContextImplPtr MCurContext;
@@ -219,7 +225,7 @@ struct MemObjRecord {
 /// command groups. To achieve this Scheduler manages acyclic dependency graph
 /// (which can have independent sub-graphs) that consists of several types of
 /// nodes that represent specific commands:
-
+///
 /// 1. Allocate memory.
 ///    The command represents memory allocation operation. There can be
 ///    multiple allocations for a single SYCL memory object.
@@ -424,18 +430,37 @@ public:
   /// \return a vector of "immediate" dependencies for the Event given.
   std::vector<EventImplPtr> getWaitList(EventImplPtr Event);
 
+  /// Allocate buffers in the pool for a provided stream
+  ///
+  /// \param Impl to the stream object
+  /// \param StreamBufferSize of the stream buffer
+  /// \param FlushBufferSize of the flush buffer for a single work item
+  void allocateStreamBuffers(stream_impl *, size_t, size_t);
+
+  /// Deallocate all stream buffers in the pool
+  ///
+  /// \param Impl to the stream object
+  void deallocateStreamBuffers(stream_impl *);
+
   QueueImplPtr getDefaultHostQueue() { return DefaultHostQueue; }
 
-protected:
+  static MemObjRecord *getMemObjRecord(const Requirement *const Req);
+
   Scheduler();
-  static Scheduler instance;
+  ~Scheduler();
+
+protected:
+  // TODO: after switching to C++17, change std::shared_timed_mutex to
+  // std::shared_mutex
+  using RWLockT = std::shared_timed_mutex;
+  using ReadLockT = std::shared_lock<RWLockT>;
+  using WriteLockT = std::unique_lock<RWLockT>;
 
   /// Provides exclusive access to std::shared_timed_mutex object with deadlock
   /// avoidance
   ///
-  /// \param Lock is an instance of std::unique_lock<std::shared_timed_mutex>
-  /// class
-  void lockSharedTimedMutex(std::unique_lock<std::shared_timed_mutex> &Lock);
+  /// \param Lock is an instance of WriteLockT, created with \c std::defer_lock
+  void acquireWriteLock(WriteLockT &Lock);
 
   static void enqueueLeavesOfReqUnlocked(const Requirement *const Req);
 
@@ -454,25 +479,27 @@ protected:
     /// \sa queue::submit, Scheduler::addCG
     ///
     /// \return a command that represents command group execution.
-    Command *addCG(std::unique_ptr<detail::CG> CommandGroup,
-                   QueueImplPtr Queue);
+    Command *addCG(std::unique_ptr<detail::CG> CommandGroup, QueueImplPtr Queue,
+                   std::vector<Command *> &ToEnqueue);
 
     /// Registers a \ref CG "command group" that updates host memory to the
     /// latest state.
     ///
     /// \return a command that represents command group execution.
     Command *addCGUpdateHost(std::unique_ptr<detail::CG> CommandGroup,
-                             QueueImplPtr HostQueue);
+                             QueueImplPtr HostQueue,
+                             std::vector<Command *> &ToEnqueue);
 
     /// Enqueues a command to update memory to the latest state.
     ///
     /// \param Req is a requirement, that describes memory object.
-    Command *addCopyBack(Requirement *Req);
+    Command *addCopyBack(Requirement *Req, std::vector<Command *> &ToEnqueue);
 
     /// Enqueues a command to create a host accessor.
     ///
     /// \param Req points to memory being accessed.
-    Command *addHostAccessor(Requirement *Req);
+    Command *addHostAccessor(Requirement *Req,
+                             std::vector<Command *> &ToEnqueue);
 
     /// [Provisional] Optimizes the whole graph.
     void optimize();
@@ -483,7 +510,9 @@ protected:
 
     /// Removes finished non-leaf non-alloca commands from the subgraph
     /// (assuming that all its commands have been waited for).
-    void cleanupFinishedCommands(Command *FinishedCmd);
+    void cleanupFinishedCommands(
+        Command *FinishedCmd,
+        std::vector<std::shared_ptr<cl::sycl::detail::stream_impl>> &);
 
     /// Reschedules the command passed using Queue provided.
     ///
@@ -500,20 +529,24 @@ protected:
     /// \return a pointer to MemObjRecord for pointer to memory object. If the
     /// record is not found, nullptr is returned.
     MemObjRecord *getOrInsertMemObjRecord(const QueueImplPtr &Queue,
-                                          const Requirement *Req);
+                                          const Requirement *Req,
+                                          std::vector<Command *> &ToEnqueue);
 
     /// Decrements leaf counters for all leaves of the record.
     void decrementLeafCountersForRecord(MemObjRecord *Record);
 
     /// Removes commands that use the given MemObjRecord from the graph.
-    void cleanupCommandsForRecord(MemObjRecord *Record);
+    void cleanupCommandsForRecord(
+        MemObjRecord *Record,
+        std::vector<std::shared_ptr<cl::sycl::detail::stream_impl>> &);
 
     /// Removes the MemObjRecord for the memory object passed.
     void removeRecordForMemObj(SYCLMemObjI *MemObject);
 
     /// Adds new command to leaves if needed.
     void addNodeToLeaves(MemObjRecord *Record, Command *Cmd,
-                         access::mode AccessMode);
+                         access::mode AccessMode,
+                         std::vector<Command *> &ToEnqueue);
 
     /// Removes commands from leaves.
     void updateLeaves(const std::set<Command *> &Cmds, MemObjRecord *Record,
@@ -523,10 +556,11 @@ protected:
     /// \param Cmd dependant command
     /// \param DepEvent event to depend on
     /// \param Dep optional DepDesc to perform connection properly
+    /// \returns the connecting command which is to be enqueued
     ///
     /// Optionality of Dep is set by Dep.MDepCommand equal to nullptr.
-    void connectDepEvent(Command *const Cmd, EventImplPtr DepEvent,
-                         const DepDesc &Dep);
+    Command *connectDepEvent(Command *const Cmd, EventImplPtr DepEvent,
+                             const DepDesc &Dep);
 
     std::vector<SYCLMemObjI *> MMemObjs;
 
@@ -541,16 +575,19 @@ protected:
     /// \param Req is a Requirement describing destination.
     /// \param Queue is a queue that is bound to target context.
     Command *insertMemoryMove(MemObjRecord *Record, Requirement *Req,
-                              const QueueImplPtr &Queue);
+                              const QueueImplPtr &Queue,
+                              std::vector<Command *> &ToEnqueue);
 
     // Inserts commands required to remap the memory object to its current host
     // context so that the required access mode becomes valid.
     Command *remapMemoryObject(MemObjRecord *Record, Requirement *Req,
-                               AllocaCommandBase *HostAllocaCmd);
+                               AllocaCommandBase *HostAllocaCmd,
+                               std::vector<Command *> &ToEnqueue);
 
     UpdateHostRequirementCommand *
     insertUpdateHostReqCmd(MemObjRecord *Record, Requirement *Req,
-                           const QueueImplPtr &Queue);
+                           const QueueImplPtr &Queue,
+                           std::vector<Command *> &ToEnqueue);
 
     /// Finds dependencies for the requirement.
     std::set<Command *> findDepsForReq(MemObjRecord *Record,
@@ -558,11 +595,12 @@ protected:
                                        const ContextImplPtr &Context);
 
     template <typename T>
-    typename std::enable_if<
-        std::is_same<typename std::remove_cv<T>::type, Requirement>::value,
-        EmptyCommand *>::type
+    typename detail::enable_if_t<
+        std::is_same<typename std::remove_cv_t<T>, Requirement>::value,
+        EmptyCommand *>
     addEmptyCmd(Command *Cmd, const std::vector<T *> &Req,
-                const QueueImplPtr &Queue, Command::BlockReason Reason);
+                const QueueImplPtr &Queue, Command::BlockReason Reason,
+                std::vector<Command *> &ToEnqueue);
 
   protected:
     /// Finds a command dependency corresponding to the record.
@@ -574,17 +612,25 @@ protected:
                                         const ContextImplPtr &Context);
 
     friend class Command;
+    friend class Scheduler;
 
   private:
+    friend class ::MockScheduler;
+
     /// Searches for suitable alloca in memory record.
     ///
     /// If none found, creates new one.
-    AllocaCommandBase *getOrCreateAllocaForReq(MemObjRecord *Record,
-                                               const Requirement *Req,
-                                               QueueImplPtr Queue);
+    AllocaCommandBase *
+    getOrCreateAllocaForReq(MemObjRecord *Record, const Requirement *Req,
+                            QueueImplPtr Queue,
+                            std::vector<Command *> &ToEnqueue);
 
     void markModifiedIfWrite(MemObjRecord *Record, Requirement *Req);
 
+    /// Used to track commands that need to be visited during graph traversal.
+    std::queue<Command *> MCmdsToVisit;
+    /// Used to track commands that have been visited during graph traversal.
+    std::vector<Command *> MVisitedCmds;
     /// Prints contents of graph to text file in DOT format
     ///
     /// \param ModeName is a stringified printing mode name to be used
@@ -599,7 +645,7 @@ protected:
       AfterAddHostAcc,
       Size
     };
-    std::array<bool, PrintOptions::Size> MPrintOptionsArray;
+    std::array<bool, PrintOptions::Size> MPrintOptionsArray{false};
   };
 
   /// Graph Processor provides interfaces for enqueueing commands and their
@@ -681,27 +727,88 @@ protected:
     static std::vector<EventImplPtr> getWaitList(EventImplPtr Event);
 
     /// Waits for the command, associated with Event passed, is completed.
-    static void waitForEvent(EventImplPtr Event);
+    /// \param GraphReadLock read-lock which is already acquired for reading
+    /// \param LockTheLock selects if graph lock should be locked upon return
+    ///
+    /// The function may unlock and lock GraphReadLock as needed. Upon return
+    /// the lock is left in locked state if and only if LockTheLock is true.
+    static void waitForEvent(EventImplPtr Event, ReadLockT &GraphReadLock,
+                             bool LockTheLock = true);
 
     /// Enqueues the command and all its dependencies.
     ///
     /// \param EnqueueResult is set to specific status if enqueue failed.
     /// \return true if the command is successfully enqueued.
+    ///
+    /// The function may unlock and lock GraphReadLock as needed. Upon return
+    /// the lock is left in locked state.
     static bool enqueueCommand(Command *Cmd, EnqueueResultT &EnqueueResult,
                                BlockingT Blocking = NON_BLOCKING);
   };
 
-  void waitForRecordToFinish(MemObjRecord *Record);
+  /// This function waits on all of the graph leaves which somehow use the
+  /// memory object which is represented by \c Record. The function is called
+  /// upon destruction of memory buffer.
+  /// \param Record memory record to await graph leaves of to finish
+  /// \param GraphReadLock locked graph read lock
+  ///
+  /// GraphReadLock will be unlocked/locked as needed. Upon return from the
+  /// function, GraphReadLock will be left in locked state.
+  void waitForRecordToFinish(MemObjRecord *Record, ReadLockT &GraphReadLock);
 
   GraphBuilder MGraphBuilder;
-  // TODO: after switching to C++17, change std::shared_timed_mutex to
-  // std::shared_mutex
-  std::shared_timed_mutex MGraphLock;
+  RWLockT MGraphLock;
 
   QueueImplPtr DefaultHostQueue;
 
   friend class Command;
   friend class DispatchHostTask;
+
+  /// Stream buffers structure.
+  ///
+  /// The structure contains all buffers for a stream object.
+  struct StreamBuffers {
+    StreamBuffers(size_t StreamBufferSize, size_t FlushBufferSize)
+        // Initialize stream buffer with zeros, this is needed for two reasons:
+        // 1. We don't need to care about end of line when printing out
+        // streamed data.
+        // 2. Offset is properly initialized.
+        : Data(StreamBufferSize, 0),
+          Buf(Data.data(), range<1>(StreamBufferSize),
+              {property::buffer::use_host_ptr()}),
+          FlushBuf(range<1>(FlushBufferSize)) {
+      // Disable copy back on buffer destruction. Copy is scheduled as a host
+      // task which fires up as soon as kernel has completed exectuion.
+      Buf.set_write_back(false);
+      FlushBuf.set_write_back(false);
+    }
+
+    // Vector on the host side which is used to initialize the stream
+    // buffer
+    std::vector<char> Data;
+
+    // Stream buffer
+    buffer<char, 1> Buf;
+
+    // Global flush buffer
+    buffer<char, 1> FlushBuf;
+  };
+
+  friend class stream_impl;
+  friend void initStream(StreamImplPtr, QueueImplPtr);
+
+  // Protects stream buffers pool
+  std::recursive_mutex StreamBuffersPoolMutex;
+
+  // We need to store a pointer to the structure with stream buffers because we
+  // want to avoid a situation when buffers are destructed during destruction of
+  // the scheduler. Scheduler is a global object and it can be destructed after
+  // all device runtimes are unloaded. Destruction of the buffers at this stage
+  // will lead to a faliure. In the correct program there will be sync points
+  // for all kernels and all allocated resources will be released by the
+  // scheduler. If program is not correct and doesn't have necessary sync point
+  // then warning will be issued.
+  std::unordered_map<stream_impl *, StreamBuffers *> StreamBuffersPool;
 };
 
 } // namespace detail

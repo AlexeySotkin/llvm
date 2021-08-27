@@ -28,7 +28,8 @@ enum class image_channel_type : unsigned int;
 
 template <int Dimensions, typename AllocatorT> class image;
 template <typename DataT, int Dimensions, access::mode AccessMode,
-          access::target AccessTarget, access::placeholder IsPlaceholder>
+          access::target AccessTarget, access::placeholder IsPlaceholder,
+          typename property_listT>
 class accessor;
 class handler;
 
@@ -63,7 +64,7 @@ using is_validImageDataT = typename detail::is_contained<
 
 template <typename DataT>
 using EnableIfImgAccDataT =
-    typename std::enable_if<is_validImageDataT<DataT>::value, DataT>::type;
+    typename detail::enable_if_t<is_validImageDataT<DataT>::value, DataT>;
 
 template <int Dimensions>
 class __SYCL_EXPORT image_impl final : public SYCLMemObjT {
@@ -72,8 +73,7 @@ class __SYCL_EXPORT image_impl final : public SYCLMemObjT {
 
 private:
   template <bool B>
-  using EnableIfPitchT =
-      typename std::enable_if<B, range<Dimensions - 1>>::type;
+  using EnableIfPitchT = typename detail::enable_if_t<B, range<Dimensions - 1>>;
   static_assert(Dimensions >= 1 || Dimensions <= 3,
                 "Dimensions of cl::sycl::image can be 1, 2 or 3");
 
@@ -81,6 +81,7 @@ private:
     size_t WHD[3] = {1, 1, 1}; // Width, Height, Depth.
     for (int I = 0; I < Dimensions; I++)
       WHD[I] = MRange[I];
+
     MRowPitch = MElementSize * WHD[0];
     MSlicePitch = MRowPitch * WHD[1];
     BaseT::MSizeInBytes = MSlicePitch * WHD[2];
@@ -94,13 +95,14 @@ private:
     // NumSlices is depth when dim==3, and height when dim==2.
     size_t NumSlices =
         (Dimensions == 3) ? MRange[2] : MRange[1]; // Dimensions will be 2/3.
+
     BaseT::MSizeInBytes = MSlicePitch * NumSlices;
   }
 
 public:
   image_impl(image_channel_order Order, image_channel_type Type,
              const range<Dimensions> &ImageRange,
-             unique_ptr_class<SYCLMemObjAllocator> Allocator,
+             std::unique_ptr<SYCLMemObjAllocator> Allocator,
              const property_list &PropList = {})
       : image_impl((void *)nullptr, Order, Type, ImageRange,
                    std::move(Allocator), PropList) {}
@@ -109,14 +111,14 @@ public:
   image_impl(image_channel_order Order, image_channel_type Type,
              const range<Dimensions> &ImageRange,
              const EnableIfPitchT<B> &Pitch,
-             unique_ptr_class<SYCLMemObjAllocator> Allocator,
+             std::unique_ptr<SYCLMemObjAllocator> Allocator,
              const property_list &PropList = {})
       : image_impl((void *)nullptr, Order, Type, ImageRange, Pitch,
                    std::move(Allocator), PropList) {}
 
   image_impl(void *HData, image_channel_order Order, image_channel_type Type,
              const range<Dimensions> &ImageRange,
-             unique_ptr_class<SYCLMemObjAllocator> Allocator,
+             std::unique_ptr<SYCLMemObjAllocator> Allocator,
              const property_list &PropList = {})
       : BaseT(PropList, std::move(Allocator)), MRange(ImageRange),
         MOrder(Order), MType(Type),
@@ -128,7 +130,7 @@ public:
 
   image_impl(const void *HData, image_channel_order Order,
              image_channel_type Type, const range<Dimensions> &ImageRange,
-             unique_ptr_class<SYCLMemObjAllocator> Allocator,
+             std::unique_ptr<SYCLMemObjAllocator> Allocator,
              const property_list &PropList = {})
       : BaseT(PropList, std::move(Allocator)), MRange(ImageRange),
         MOrder(Order), MType(Type),
@@ -142,7 +144,7 @@ public:
   image_impl(void *HData, image_channel_order Order, image_channel_type Type,
              const range<Dimensions> &ImageRange,
              const EnableIfPitchT<B> &Pitch,
-             unique_ptr_class<SYCLMemObjAllocator> Allocator,
+             std::unique_ptr<SYCLMemObjAllocator> Allocator,
              const property_list &PropList = {})
       : BaseT(PropList, std::move(Allocator)), MRange(ImageRange),
         MOrder(Order), MType(Type),
@@ -152,9 +154,9 @@ public:
     BaseT::handleHostData(HData, detail::getNextPowerOfTwo(MElementSize));
   }
 
-  image_impl(shared_ptr_class<void> &HData, image_channel_order Order,
+  image_impl(std::shared_ptr<void> &HData, image_channel_order Order,
              image_channel_type Type, const range<Dimensions> &ImageRange,
-             unique_ptr_class<SYCLMemObjAllocator> Allocator,
+             std::unique_ptr<SYCLMemObjAllocator> Allocator,
              const property_list &PropList = {})
       : BaseT(PropList, std::move(Allocator)), MRange(ImageRange),
         MOrder(Order), MType(Type),
@@ -166,10 +168,10 @@ public:
 
   /* Available only when: Dimensions > 1 */
   template <bool B = (Dimensions > 1)>
-  image_impl(shared_ptr_class<void> &HData, image_channel_order Order,
+  image_impl(std::shared_ptr<void> &HData, image_channel_order Order,
              image_channel_type Type, const range<Dimensions> &ImageRange,
              const EnableIfPitchT<B> &Pitch,
-             unique_ptr_class<SYCLMemObjAllocator> Allocator,
+             std::unique_ptr<SYCLMemObjAllocator> Allocator,
              const property_list &PropList = {})
       : BaseT(PropList, std::move(Allocator)), MRange(ImageRange),
         MOrder(Order), MType(Type),
@@ -180,7 +182,7 @@ public:
   }
 
   image_impl(cl_mem MemObject, const context &SyclContext, event AvailableEvent,
-             unique_ptr_class<SYCLMemObjAllocator> Allocator);
+             std::unique_ptr<SYCLMemObjAllocator> Allocator);
 
   // Return a range object representing the size of the image in terms of the
   // number of elements in each dimension as passed to the constructor
@@ -189,7 +191,7 @@ public:
   // Return a range object representing the pitch of the image in bytes.
   // Available only when: Dimensions == 2.
   template <bool B = (Dimensions == 2)>
-  typename std::enable_if<B, range<1>>::type get_pitch() const {
+  typename detail::enable_if_t<B, range<1>> get_pitch() const {
     range<1> Temp = range<1>(MRowPitch);
     return Temp;
   }
@@ -197,18 +199,19 @@ public:
   // Return a range object representing the pitch of the image in bytes.
   // Available only when: Dimensions == 3.
   template <bool B = (Dimensions == 3)>
-  typename std::enable_if<B, range<2>>::type get_pitch() const {
+  typename detail::enable_if_t<B, range<2>> get_pitch() const {
     range<2> Temp = range<2>(MRowPitch, MSlicePitch);
     return Temp;
   }
 
   // Returns the total number of elements in the image
-  size_t get_count() const { return MRange.size(); }
+  size_t get_count() const { return size(); }
+  size_t size() const noexcept { return MRange.size(); }
 
   void *allocateMem(ContextImplPtr Context, bool InitFromUserData,
                     void *HostPtr, RT::PiEvent &OutEventToWait) override;
 
-  MemObjType getType() const override { return MemObjType::IMAGE; }
+  MemObjType getType() const override { return MemObjType::Image; }
 
   // This utility api is currently used by accessor to get the element size of
   // the image. Element size is dependent on num of channels and channel type.
@@ -231,7 +234,7 @@ public:
   }
 
 private:
-  vector_class<device> getDevices(const ContextImplPtr Context);
+  std::vector<device> getDevices(const ContextImplPtr Context);
 
   RT::PiMemObjectType getImageType() {
     if (Dimensions == 1)
@@ -244,15 +247,19 @@ private:
   RT::PiMemImageDesc getImageDesc(bool InitFromHostPtr) {
     RT::PiMemImageDesc Desc;
     Desc.image_type = getImageType();
-    Desc.image_width = MRange[0];
-    Desc.image_height = Dimensions > 1 ? MRange[1] : 1;
-    Desc.image_depth = Dimensions > 2 ? MRange[2] : 1;
+
+    // MRange<> is [width], [width,height], or [width,height,depth] (which
+    // is different than MAccessRange, etc in bufffers)
+    static constexpr int XTermPos = 0, YTermPos = 1, ZTermPos = 2;
+    Desc.image_width = MRange[XTermPos];
+    Desc.image_height = Dimensions > 1 ? MRange[YTermPos] : 1;
+    Desc.image_depth = Dimensions > 2 ? MRange[ZTermPos] : 1;
+
     // TODO handle cases with IMAGE1D_ARRAY and IMAGE2D_ARRAY
     Desc.image_array_size = 0;
     // Pitches must be 0 if host ptr is not provided.
     Desc.image_row_pitch = InitFromHostPtr ? MRowPitch : 0;
     Desc.image_slice_pitch = InitFromHostPtr ? MSlicePitch : 0;
-
     Desc.num_mip_levels = 0;
     Desc.num_samples = 0;
     Desc.buffer = nullptr;

@@ -77,7 +77,7 @@ on the standard library facilities and the LLVM support libraries as much as
 possible.
 
 LLVM support libraries (for example, `ADT
-<https://github.com/llvm/llvm-project/tree/master/llvm/include/llvm/ADT>`_)
+<https://github.com/llvm/llvm-project/tree/main/llvm/include/llvm/ADT>`_)
 implement specialized data structures or functionality missing in the standard
 library. Such libraries are usually implemented in the ``llvm`` namespace and
 follow the expected standard interface, when there is one.
@@ -173,6 +173,16 @@ of the file.  The first sentence (or a passage beginning with ``\brief``) is
 used as an abstract.  Any additional information should be separated by a blank
 line.  If an algorithm is based on a paper or is described in another source,
 provide a reference.
+
+Header Guard
+""""""""""""
+
+The header file's guard should be the all-caps path that a user of this header
+would #include, using '_' instead of path separator and extension marker. 
+For example, the header file
+``llvm/include/llvm/Analysis/Utils/Local.h`` would be ``#include``-ed as 
+``#include "llvm/Analysis/Utils/Local.h"``, so its guard is 
+``LLVM_ANALYSIS_UTILS_LOCAL_H``.
 
 Class overviews
 """""""""""""""
@@ -738,8 +748,7 @@ Library Layering
 ^^^^^^^^^^^^^^^^
 
 A directory of header files (for example ``include/llvm/Foo``) defines a
-library (``Foo``). Dependencies between libraries are defined by the
-``LLVMBuild.txt`` file in their implementation (``lib/Foo``). One library (both
+library (``Foo``). One library (both
 its headers and implementation) should only use things from the libraries
 listed in its dependencies.
 

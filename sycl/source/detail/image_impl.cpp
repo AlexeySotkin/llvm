@@ -54,15 +54,16 @@ uint8_t getImageNumberChannels(image_channel_order Order) {
   case image_channel_order::ra:
     return 2;
   case image_channel_order::rgb:
-  case image_channel_order::rgbx:
     return 3;
+  case image_channel_order::rgbx:
   case image_channel_order::rgba:
   case image_channel_order::argb:
   case image_channel_order::bgra:
   case image_channel_order::abgr:
+  case image_channel_order::ext_oneapi_srgba:
     return 4;
   }
-  assert(!"Unhandled image channel order");
+  assert(false && "Unhandled image channel order");
   return 0;
 }
 
@@ -95,8 +96,6 @@ uint8_t getImageElementSize(uint8_t NumChannels, image_channel_type Type) {
   case image_channel_type::unorm_int_101010:
     Retval = 4;
     break;
-  default:
-    assert(!"Unhandled image channel type");
   }
   // OpenCL states that "The number of bits per element determined by the
   // image_channel_type and image_channel_order must be a power of two"
@@ -135,11 +134,11 @@ RT::PiMemImageChannelOrder convertChannelOrder(image_channel_order Order) {
     return PI_IMAGE_CHANNEL_ORDER_LUMINANCE;
   case image_channel_order::abgr:
     return PI_IMAGE_CHANNEL_ORDER_ABGR;
-  default: {
-    assert(!"Unhandled image_channel_order");
-    return static_cast<RT::PiMemImageChannelOrder>(0);
+  case image_channel_order::ext_oneapi_srgba:
+    return PI_IMAGE_CHANNEL_ORDER_sRGBA;
   }
-  }
+  assert(false && "Unhandled image_channel_order");
+  return static_cast<RT::PiMemImageChannelOrder>(0);
 }
 
 image_channel_order convertChannelOrder(RT::PiMemImageChannelOrder Order) {
@@ -172,11 +171,11 @@ image_channel_order convertChannelOrder(RT::PiMemImageChannelOrder Order) {
     return image_channel_order::luminance;
   case PI_IMAGE_CHANNEL_ORDER_ABGR:
     return image_channel_order::abgr;
-  default: {
-    assert(!"Unhandled image_channel_order");
-    return static_cast<image_channel_order>(0);
+  case PI_IMAGE_CHANNEL_ORDER_sRGBA:
+    return image_channel_order::ext_oneapi_srgba;
   }
-  }
+  assert(false && "Unhandled image_channel_order");
+  return static_cast<image_channel_order>(0);
 }
 
 RT::PiMemImageChannelType convertChannelType(image_channel_type Type) {
@@ -211,11 +210,9 @@ RT::PiMemImageChannelType convertChannelType(image_channel_type Type) {
     return PI_IMAGE_CHANNEL_TYPE_HALF_FLOAT;
   case image_channel_type::fp32:
     return PI_IMAGE_CHANNEL_TYPE_FLOAT;
-  default: {
-    assert(!"Unhandled image_channel_order");
-    return static_cast<RT::PiMemImageChannelType>(0);
   }
-  }
+  assert(false && "Unhandled image_channel_order");
+  return static_cast<RT::PiMemImageChannelType>(0);
 }
 
 image_channel_type convertChannelType(RT::PiMemImageChannelType Type) {
@@ -250,11 +247,9 @@ image_channel_type convertChannelType(RT::PiMemImageChannelType Type) {
     return image_channel_type::fp16;
   case PI_IMAGE_CHANNEL_TYPE_FLOAT:
     return image_channel_type::fp32;
-  default: {
-    assert(!"Unhandled image_channel_order");
-    return static_cast<image_channel_type>(0);
   }
-  }
+  assert(false && "Unhandled image_channel_order");
+  return static_cast<image_channel_type>(0);
 }
 
 template <typename T>
@@ -269,7 +264,7 @@ static void getImageInfo(const ContextImplPtr Context, RT::PiMemImageInfo Info,
 template <int Dimensions>
 image_impl<Dimensions>::image_impl(
     cl_mem MemObject, const context &SyclContext, event AvailableEvent,
-    unique_ptr_class<SYCLMemObjAllocator> Allocator)
+    std::unique_ptr<SYCLMemObjAllocator> Allocator)
     : BaseT(MemObject, SyclContext, std::move(AvailableEvent),
             std::move(Allocator)),
       MRange(InitializedVal<Dimensions, range>::template get<0>()) {
@@ -294,10 +289,10 @@ image_impl<Dimensions>::image_impl(
   switch (Dimensions) {
   case 3:
     getImageInfo(Context, PI_IMAGE_INFO_DEPTH, MRange[2], Mem);
-    // fall through
+    __SYCL_FALLTHROUGH;
   case 2:
     getImageInfo(Context, PI_IMAGE_INFO_HEIGHT, MRange[1], Mem);
-    // fall through
+    __SYCL_FALLTHROUGH;
   case 1:
     getImageInfo(Context, PI_IMAGE_INFO_WIDTH, MRange[0], Mem);
   }
@@ -307,15 +302,11 @@ template <int Dimensions>
 void *image_impl<Dimensions>::allocateMem(ContextImplPtr Context,
                                           bool InitFromUserData, void *HostPtr,
                                           RT::PiEvent &OutEventToWait) {
+  bool HostPtrReadOnly = false;
+  BaseT::determineHostPtr(Context, InitFromUserData, HostPtr, HostPtrReadOnly);
 
-  assert(!(InitFromUserData && HostPtr) &&
-         "Cannot init from user data and reuse host ptr provided "
-         "simultaneously");
-
-  void *UserPtr = InitFromUserData ? BaseT::getUserPtr() : HostPtr;
-
-  RT::PiMemImageDesc Desc = getImageDesc(UserPtr != nullptr);
-  assert(checkImageDesc(Desc, Context, UserPtr) &&
+  RT::PiMemImageDesc Desc = getImageDesc(HostPtr != nullptr);
+  assert(checkImageDesc(Desc, Context, HostPtr) &&
          "The check an image desc failed.");
 
   RT::PiMemImageFormat Format = getImageFormat();
@@ -323,9 +314,9 @@ void *image_impl<Dimensions>::allocateMem(ContextImplPtr Context,
          "The check an image format failed.");
 
   return MemoryManager::allocateMemImage(
-      std::move(Context), this, UserPtr, BaseT::MHostPtrReadOnly,
-      BaseT::getSize(), Desc, Format, BaseT::MInteropEvent,
-      BaseT::MInteropContext, MProps, OutEventToWait);
+      std::move(Context), this, HostPtr, HostPtrReadOnly, BaseT::getSize(),
+      Desc, Format, BaseT::MInteropEvent, BaseT::MInteropContext, MProps,
+      OutEventToWait);
 }
 
 template <int Dimensions>
@@ -411,6 +402,7 @@ bool image_impl<Dimensions>::checkImageDesc(const RT::PiMemImageDesc &Desc,
 template <int Dimensions>
 bool image_impl<Dimensions>::checkImageFormat(
     const RT::PiMemImageFormat &Format, ContextImplPtr Context) {
+  (void)Context;
   if (checkAny(Format.image_channel_order, PI_IMAGE_CHANNEL_ORDER_INTENSITY,
                PI_IMAGE_CHANNEL_ORDER_LUMINANCE) &&
       !checkAny(
@@ -424,16 +416,17 @@ bool image_impl<Dimensions>::checkImageFormat(
         "CL_SNORM_INT16, CL_HALF_FLOAT, or CL_FLOAT.",
         PI_INVALID_VALUE);
 
-  if (checkAny(Format.image_channel_order, PI_IMAGE_CHANNEL_ORDER_RGB,
-               PI_IMAGE_CHANNEL_ORDER_RGBx) &&
-      !checkAny(Format.image_channel_data_type,
-                PI_IMAGE_CHANNEL_TYPE_UNORM_SHORT_565,
-                PI_IMAGE_CHANNEL_TYPE_UNORM_SHORT_555,
-                PI_IMAGE_CHANNEL_TYPE_UNORM_INT_101010))
+  if (checkAny(Format.image_channel_data_type,
+               PI_IMAGE_CHANNEL_TYPE_UNORM_SHORT_565,
+               PI_IMAGE_CHANNEL_TYPE_UNORM_SHORT_555,
+               PI_IMAGE_CHANNEL_TYPE_UNORM_INT_101010) &&
+      !checkAny(Format.image_channel_order, PI_IMAGE_CHANNEL_ORDER_RGB,
+                PI_IMAGE_CHANNEL_ORDER_RGBx))
     throw invalid_parameter_error(
-        "CL_RGB or CL_RGBx	These formats can only be used if channel data "
         "type = CL_UNORM_SHORT_565, CL_UNORM_SHORT_555 or "
-        "CL_UNORM_INT_101010.",
+        "CL_UNORM_INT_101010."
+        "These channel types can only be used with CL_RGB or CL_RGBx channel "
+        "order.",
         PI_INVALID_VALUE);
 
   if (checkAny(Format.image_channel_order, PI_IMAGE_CHANNEL_ORDER_ARGB,
@@ -452,7 +445,7 @@ bool image_impl<Dimensions>::checkImageFormat(
 }
 
 template <int Dimensions>
-vector_class<device>
+std::vector<device>
 image_impl<Dimensions>::getDevices(const ContextImplPtr Context) {
   return Context->get_info<info::context::devices>();
 }

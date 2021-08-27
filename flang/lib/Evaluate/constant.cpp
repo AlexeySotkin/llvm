@@ -93,13 +93,13 @@ std::optional<std::vector<int>> ValidateDimensionOrder(
   }
 }
 
-bool IsValidShape(const ConstantSubscripts &shape) {
+bool HasNegativeExtent(const ConstantSubscripts &shape) {
   for (ConstantSubscript extent : shape) {
     if (extent < 0) {
-      return false;
+      return true;
     }
   }
-  return shape.size() <= common::maxRank;
+  return false;
 }
 
 template <typename RESULT, typename ELEMENT>
@@ -313,6 +313,10 @@ std::size_t Constant<SomeDerived>::CopyFrom(const Constant<SomeDerived> &source,
     std::size_t count, ConstantSubscripts &resultSubscripts,
     const std::vector<int> *dimOrder) {
   return Base::CopyFrom(source, count, resultSubscripts, dimOrder);
+}
+
+bool ComponentCompare::operator()(SymbolRef x, SymbolRef y) const {
+  return semantics::SymbolSourcePositionCompare{}(x, y);
 }
 
 INSTANTIATE_CONSTANT_TEMPLATES

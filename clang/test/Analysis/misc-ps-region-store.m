@@ -461,10 +461,11 @@ void element_region_with_symbolic_superregion(int* p) {
 // Test returning an out-of-bounds pointer (CWE-466)
 //===----------------------------------------------------------------------===//
 
-static int test_cwe466_return_outofbounds_pointer_a[10];
+static int test_cwe466_return_outofbounds_pointer_a[10]; // expected-note{{Original object declared here}}
 int *test_cwe466_return_outofbounds_pointer() {
-  int *p = test_cwe466_return_outofbounds_pointer_a+10;
+  int *p = test_cwe466_return_outofbounds_pointer_a+11;
   return p; // expected-warning{{Returned pointer value points outside the original object}}
+            // expected-note@-1{{Original object 'test_cwe466_return_outofbounds_pointer_a' is an array of 10 'int' objects, returned pointer points at index 11}}
 }
 
 //===----------------------------------------------------------------------===//
@@ -1157,7 +1158,7 @@ struct list_pr8141
 struct list_pr8141 *
 pr8141 (void) {
   struct list_pr8141 *items;
-  for (;; items = ({ do { } while (0); items->tail; })) // expected-warning{{Dereference of undefined pointer value}}
+  for (;; items = ({ do { } while (0); items->tail; })) // expected-warning{{dereference of an undefined pointer value}}
     {
     }
 }

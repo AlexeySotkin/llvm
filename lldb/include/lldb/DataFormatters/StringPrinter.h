@@ -109,7 +109,7 @@ public:
 
     uint64_t GetLocation() const { return m_location; }
 
-    void SetProcessSP(lldb::ProcessSP p) { m_process_sp = p; }
+    void SetProcessSP(lldb::ProcessSP p) { m_process_sp = std::move(p); }
 
     lldb::ProcessSP GetProcessSP() const { return m_process_sp; }
 
@@ -133,9 +133,9 @@ public:
     ReadBufferAndDumpToStreamOptions(
         const ReadStringAndDumpToStreamOptions &options);
 
-    void SetData(DataExtractor d) { m_data = d; }
+    void SetData(DataExtractor &&d) { m_data = std::move(d); }
 
-    lldb_private::DataExtractor GetData() const { return m_data; }
+    const lldb_private::DataExtractor &GetData() const { return m_data; }
 
     void SetIsTruncated(bool t) { m_is_truncated = t; }
 

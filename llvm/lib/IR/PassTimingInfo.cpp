@@ -35,10 +35,16 @@ using namespace llvm;
 namespace llvm {
 
 bool TimePassesIsEnabled = false;
+bool TimePassesPerRun = false;
 
 static cl::opt<bool, true> EnableTiming(
     "time-passes", cl::location(TimePassesIsEnabled), cl::Hidden,
     cl::desc("Time each pass, printing elapsed time for each on exit"));
+
+static cl::opt<bool, true> EnableTimingPerRun(
+    "time-passes-per-run", cl::location(TimePassesPerRun), cl::Hidden,
+    cl::desc("Time each pass run, printing elapsed time for each run on exit"),
+    cl::callback([](const bool &) { TimePassesIsEnabled = true; }));
 
 namespace {
 namespace legacy {
@@ -165,6 +171,13 @@ void reportAndResetTimings(raw_ostream *OutStream) {
 /// Returns the timer for the specified pass invocation of \p PassID.
 /// Each time it creates a new timer.
 Timer &TimePassesHandler::getPassTimer(StringRef PassID) {
+  if (!PerRun) {
+    TimerVector &Timers = TimingData[PassID];
+    if (Timers.size() == 0)
+      Timers.emplace_back(new Timer(PassID, PassID, TG));
+    return *Timers.front();
+  }
+
   // Take a vector of Timers created for this \p PassID and append
   // one more timer to it.
   TimerVector &Timers = TimingData[PassID];
@@ -179,8 +192,12 @@ Timer &TimePassesHandler::getPassTimer(StringRef PassID) {
   return *T;
 }
 
-TimePassesHandler::TimePassesHandler(bool Enabled)
-    : TG("pass", "... Pass execution timing report ..."), Enabled(Enabled) {}
+TimePassesHandler::TimePassesHandler(bool Enabled, bool PerRun)
+    : TG("pass", "... Pass execution timing report ..."), Enabled(Enabled),
+      PerRun(PerRun) {}
+
+TimePassesHandler::TimePassesHandler()
+    : TimePassesHandler(TimePassesIsEnabled, TimePassesPerRun) {}
 
 void TimePassesHandler::setOutStream(raw_ostream &Out) {
   OutStream = &Out;
@@ -231,30 +248,20 @@ void TimePassesHandler::stopTimer(StringRef PassID) {
     MyTimer->stopTimer();
 }
 
-static bool matchPassManager(StringRef PassID) {
-  size_t prefix_pos = PassID.find('<');
-  if (prefix_pos == StringRef::npos)
-    return false;
-  StringRef Prefix = PassID.substr(0, prefix_pos);
-  return Prefix.endswith("PassManager") || Prefix.endswith("PassAdaptor") ||
-         Prefix.endswith("AnalysisManagerProxy");
-}
-
-bool TimePassesHandler::runBeforePass(StringRef PassID) {
-  if (matchPassManager(PassID))
-    return true;
+void TimePassesHandler::runBeforePass(StringRef PassID) {
+  if (isSpecialPass(PassID,
+                    {"PassManager", "PassAdaptor", "AnalysisManagerProxy"}))
+    return;
 
   startTimer(PassID);
 
   LLVM_DEBUG(dbgs() << "after runBeforePass(" << PassID << ")\n");
   LLVM_DEBUG(dump());
-
-  // we are not going to skip this pass, thus return true.
-  return true;
 }
 
 void TimePassesHandler::runAfterPass(StringRef PassID) {
-  if (matchPassManager(PassID))
+  if (isSpecialPass(PassID,
+                    {"PassManager", "PassAdaptor", "AnalysisManagerProxy"}))
     return;
 
   stopTimer(PassID);
@@ -267,12 +274,16 @@ void TimePassesHandler::registerCallbacks(PassInstrumentationCallbacks &PIC) {
   if (!Enabled)
     return;
 
-  PIC.registerBeforePassCallback(
-      [this](StringRef P, Any) { return this->runBeforePass(P); });
+  PIC.registerBeforeNonSkippedPassCallback(
+      [this](StringRef P, Any) { this->runBeforePass(P); });
   PIC.registerAfterPassCallback(
-      [this](StringRef P, Any) { this->runAfterPass(P); });
+      [this](StringRef P, Any, const PreservedAnalyses &) {
+        this->runAfterPass(P);
+      });
   PIC.registerAfterPassInvalidatedCallback(
-      [this](StringRef P) { this->runAfterPass(P); });
+      [this](StringRef P, const PreservedAnalyses &) {
+        this->runAfterPass(P);
+      });
   PIC.registerBeforeAnalysisCallback(
       [this](StringRef P, Any) { this->runBeforePass(P); });
   PIC.registerAfterAnalysisCallback(

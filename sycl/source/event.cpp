@@ -12,6 +12,7 @@
 #include <CL/sycl/event.hpp>
 #include <CL/sycl/info/info_desc.hpp>
 #include <CL/sycl/stl.hpp>
+#include <detail/backend_impl.hpp>
 #include <detail/event_impl.hpp>
 #include <detail/scheduler/scheduler.hpp>
 
@@ -37,7 +38,7 @@ bool event::is_host() const { return impl->is_host(); }
 
 void event::wait() { impl->wait(impl); }
 
-void event::wait(const vector_class<event> &EventList) {
+void event::wait(const std::vector<event> &EventList) {
   for (auto E : EventList) {
     E.wait();
   }
@@ -45,14 +46,14 @@ void event::wait(const vector_class<event> &EventList) {
 
 void event::wait_and_throw() { impl->wait_and_throw(impl); }
 
-void event::wait_and_throw(const vector_class<event> &EventList) {
+void event::wait_and_throw(const std::vector<event> &EventList) {
   for (auto E : EventList) {
     E.wait_and_throw();
   }
 }
 
-vector_class<event> event::get_wait_list() {
-  vector_class<event> Result;
+std::vector<event> event::get_wait_list() {
+  std::vector<event> Result;
 
   for (auto &EventImpl : detail::Scheduler::getInstance().getWaitList(impl))
     Result.push_back(detail::createSyclObjFromImpl<event>(EventImpl));
@@ -60,10 +61,10 @@ vector_class<event> event::get_wait_list() {
   return Result;
 }
 
-event::event(shared_ptr_class<detail::event_impl> event_impl)
+event::event(std::shared_ptr<detail::event_impl> event_impl)
     : impl(event_impl) {}
 
-#define PARAM_TRAITS_SPEC(param_type, param, ret_type)                         \
+#define __SYCL_PARAM_TRAITS_SPEC(param_type, param, ret_type)                  \
   template <>                                                                  \
   __SYCL_EXPORT ret_type event::get_info<info::param_type::param>() const {    \
     return impl->get_info<info::param_type::param>();                          \
@@ -71,9 +72,9 @@ event::event(shared_ptr_class<detail::event_impl> event_impl)
 
 #include <CL/sycl/info/event_traits.def>
 
-#undef PARAM_TRAITS_SPEC
+#undef __SYCL_PARAM_TRAITS_SPEC
 
-#define PARAM_TRAITS_SPEC(param_type, param, ret_type)                         \
+#define __SYCL_PARAM_TRAITS_SPEC(param_type, param, ret_type)                  \
   template <>                                                                  \
   __SYCL_EXPORT ret_type event::get_profiling_info<info::param_type::param>()  \
       const {                                                                  \
@@ -83,7 +84,9 @@ event::event(shared_ptr_class<detail::event_impl> event_impl)
 
 #include <CL/sycl/info/event_profiling_traits.def>
 
-#undef PARAM_TRAITS_SPEC
+#undef __SYCL_PARAM_TRAITS_SPEC
+
+backend event::get_backend() const noexcept { return getImplBackend(impl); }
 
 pi_native_handle event::getNative() const { return impl->getNative(); }
 

@@ -1,11 +1,11 @@
 add_llvm_library(LLVMSPIRVLib
+  LLVMSPIRVOpts.cpp
   LLVMToSPIRVDbgTran.cpp
   Mangler/FunctionDescriptor.cpp
   Mangler/Mangler.cpp
   Mangler/ManglingUtils.cpp
   Mangler/ParameterType.cpp
-  OCL20ToSPIRV.cpp
-  OCL21ToSPIRV.cpp
+  OCLToSPIRV.cpp
   OCLTypeToSPIRV.cpp
   OCLUtil.cpp
   VectorComputeUtil.cpp
@@ -51,6 +51,10 @@ target_include_directories(LLVMSPIRVLib
   PRIVATE
     ${LLVM_INCLUDE_DIRS}
     ${LLVM_SPIRV_INCLUDE_DIRS}
+    # TODO: Consider using SPIRV-Headers' as a header-only INTERFACE
+    # instead. Right now this runs into exporting issues with
+    # the LLVM in-tree builds.
+    ${LLVM_EXTERNAL_SPIRV_HEADERS_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/libSPIRV
     ${CMAKE_CURRENT_SOURCE_DIR}/Mangler

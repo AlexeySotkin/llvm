@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 // TODO: include the header file with SPIR-V declarations from SPIRV-Headers
@@ -33,6 +34,46 @@ struct Scope {
 
   constexpr operator uint32_t() const { return flag_value; }
 
+  Flag flag_value;
+};
+
+struct StorageClass {
+  enum Flag : uint32_t {
+    UniformConstant = 0,
+    Input = 1,
+    Uniform = 2,
+    Output = 3,
+    Workgroup = 4,
+    CrossWorkgroup = 5,
+    Private = 6,
+    Function = 7,
+    Generic = 8,
+    PushConstant = 9,
+    AtomicCounter = 10,
+    Image = 11,
+    StorageBuffer = 12,
+    CallableDataKHR = 5328,
+    CallableDataNV = 5328,
+    IncomingCallableDataKHR = 5329,
+    IncomingCallableDataNV = 5329,
+    RayPayloadKHR = 5338,
+    RayPayloadNV = 5338,
+    HitAttributeKHR = 5339,
+    HitAttributeNV = 5339,
+    IncomingRayPayloadKHR = 5342,
+    IncomingRayPayloadNV = 5342,
+    ShaderRecordBufferKHR = 5343,
+    ShaderRecordBufferNV = 5343,
+    PhysicalStorageBuffer = 5349,
+    PhysicalStorageBufferEXT = 5349,
+    CodeSectionINTEL = 5605,
+    CapabilityUSMStorageClassesINTEL = 5935,
+    DeviceOnlyINTEL = 5936,
+    HostOnlyINTEL = 5937,
+    Max = 0x7fffffff,
+  };
+  constexpr StorageClass(Flag flag) : flag_value(flag) {}
+  constexpr operator uint32_t() const { return flag_value; }
   Flag flag_value;
 };
 
@@ -64,6 +105,12 @@ enum class GroupOperation : uint32_t {
   InclusiveScan = 1,
   ExclusiveScan = 2
 };
+
+enum class MatrixLayout { RowMajor, ColumnMajor, PackedA, PackedB };
+
+template <typename T, std::size_t R, std::size_t C, MatrixLayout U,
+          Scope::Flag S = Scope::Flag::Subgroup>
+struct __spirv_JointMatrixINTEL;
 
 } // namespace __spv
 

@@ -12,6 +12,7 @@
 #include <CL/sycl/detail/pi.hpp>
 #include <CL/sycl/exception_list.hpp>
 #include <CL/sycl/info/info_desc.hpp>
+#include <CL/sycl/property_list.hpp>
 #include <CL/sycl/stl.hpp>
 #include <detail/device_impl.hpp>
 #include <detail/kernel_program_cache.hpp>
@@ -33,13 +34,13 @@ public:
   ///
   /// The constructed context_impl will use the AsyncHandler parameter to
   /// handle exceptions.
+  /// PropList carries the properties of the constructed context_impl.
   ///
   /// \param Device is an instance of SYCL device.
   /// \param AsyncHandler is an instance of async_handler.
-  /// \param UseCUDAPrimaryContext is a bool determining whether to use the
-  ///        primary context in the CUDA backend.
+  /// \param PropList is an instance of property_list.
   context_impl(const device &Device, async_handler AsyncHandler,
-               bool UseCUDAPrimaryContext);
+               const property_list &PropList);
 
   /// Constructs a context_impl using a list of SYCL devices.
   ///
@@ -48,13 +49,13 @@ public:
   /// SYCL platform.
   /// The constructed context_impl will use the AsyncHandler parameter to
   /// handle exceptions.
+  /// PropList carries the properties of the constructed context_impl.
   ///
   /// \param DeviceList is a list of SYCL device instances.
   /// \param AsyncHandler is an instance of async_handler.
-  /// \param UseCUDAPrimaryContext is a bool determining whether to use the
-  ///        primary context in the CUDA backend.
-  context_impl(const vector_class<cl::sycl::device> DeviceList,
-               async_handler AsyncHandler, bool UseCUDAPrimaryContext);
+  /// \param PropList is an instance of property_list.
+  context_impl(const std::vector<cl::sycl::device> DeviceList,
+               async_handler AsyncHandler, const property_list &PropList);
 
   /// Construct a context_impl using plug-in interoperability handle.
   ///
@@ -69,6 +70,23 @@ public:
                const plugin &Plugin);
 
   ~context_impl();
+
+  /// Checks if this context_impl has a property of type propertyT.
+  ///
+  /// \return true if this context_impl has a property of type propertyT.
+  template <typename propertyT> bool has_property() const {
+    return MPropList.has_property<propertyT>();
+  }
+
+  /// Gets the specified property of this context_impl.
+  ///
+  /// Throws invalid_object_error if this context_impl does not have a property
+  /// of type propertyT.
+  ///
+  /// \return a copy of the property of type propertyT.
+  template <typename propertyT> propertyT get_property() const {
+    return MPropList.get_property<propertyT>();
+  }
 
   /// Gets OpenCL interoperability context handle.
   ///
@@ -120,7 +138,7 @@ public:
 
   /// Unlike `get_info<info::context::devices>', this function returns a
   /// reference.
-  const vector_class<device> &getDevices() const { return MDevices; }
+  const std::vector<device> &getDevices() const { return MDevices; }
 
   /// In contrast to user programs, which are compiled from user code, library
   /// programs come from the SYCL runtime. They are identified by the
@@ -134,14 +152,15 @@ public:
   /// more details.
   ///
   /// \returns a map with device library programs.
-  std::map<DeviceLibExt, RT::PiProgram> &getCachedLibPrograms() {
+  std::map<std::pair<DeviceLibExt, RT::PiDevice>, RT::PiProgram> &
+  getCachedLibPrograms() {
     return MCachedLibPrograms;
   }
 
   KernelProgramCache &getKernelProgramCache() const;
 
   /// Returns true if and only if context contains the given device.
-  bool hasDevice(shared_ptr_class<detail::device_impl> Device) const;
+  bool hasDevice(std::shared_ptr<detail::device_impl> Device) const;
 
   /// Gets the native handle of the SYCL context.
   ///
@@ -150,12 +169,13 @@ public:
 
 private:
   async_handler MAsyncHandler;
-  vector_class<device> MDevices;
+  std::vector<device> MDevices;
   RT::PiContext MContext;
   PlatformImplPtr MPlatform;
+  property_list MPropList;
   bool MHostContext;
-  bool MUseCUDAPrimaryContext;
-  std::map<DeviceLibExt, RT::PiProgram> MCachedLibPrograms;
+  std::map<std::pair<DeviceLibExt, RT::PiDevice>, RT::PiProgram>
+      MCachedLibPrograms;
   mutable KernelProgramCache MKernelProgramCache;
 };
 

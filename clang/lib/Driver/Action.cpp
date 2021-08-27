@@ -43,20 +43,24 @@ const char *Action::getClassName(ActionClass AC) {
     return "clang-offload-unbundler";
   case OffloadWrapperJobClass:
     return "clang-offload-wrapper";
+  case OffloadDepsJobClass:
+    return "clang-offload-deps";
   case SPIRVTranslatorJobClass:
     return "llvm-spirv";
   case SPIRCheckJobClass:
     return "llvm-no-spir-kernel";
   case SYCLPostLinkJobClass:
     return "sycl-post-link";
-  case PartialLinkJobClass:
-    return "partial-link";
   case BackendCompileJobClass:
     return "backend-compiler";
   case FileTableTformJobClass:
     return "file-table-tform";
+  case AppendFooterJobClass:
+    return "append-footer";
   case StaticLibJobClass:
     return "static-lib-linker";
+  case ForEachWrappingClass:
+    return "foreach";
   }
 
   llvm_unreachable("invalid class");
@@ -68,6 +72,9 @@ void Action::propagateDeviceOffloadInfo(OffloadKind OKind, const char *OArch) {
     return;
   // Unbundling actions use the host kinds.
   if (Kind == OffloadUnbundlingJobClass)
+    return;
+  // Deps job uses the host kinds.
+  if (Kind == OffloadDepsJobClass)
     return;
 
   assert((OffloadingDeviceKind == OKind || OffloadingDeviceKind == OFK_None) &&
@@ -183,8 +190,8 @@ StringRef Action::GetOffloadKindName(OffloadKind Kind) {
 
 void InputAction::anchor() {}
 
-InputAction::InputAction(const Arg &_Input, types::ID _Type)
-    : Action(InputClass, _Type), Input(_Input) {}
+InputAction::InputAction(const Arg &_Input, types::ID _Type, StringRef _Id)
+    : Action(InputClass, _Type), Input(_Input), Id(_Id.str()) {}
 
 void BindArchAction::anchor() {}
 
@@ -444,6 +451,18 @@ OffloadWrapperJobAction::OffloadWrapperJobAction(Action *Input,
                                                  types::ID Type)
     : JobAction(OffloadWrapperJobClass, Input, Type) {}
 
+void OffloadDepsJobAction::anchor() {}
+
+OffloadDepsJobAction::OffloadDepsJobAction(
+    const OffloadAction::HostDependence &HDep, types::ID Type)
+    : JobAction(OffloadDepsJobClass, HDep.getAction(), Type),
+      HostTC(HDep.getToolChain()) {
+  OffloadingArch = HDep.getBoundArch();
+  ActiveOffloadKindMask = HDep.getOffloadKinds();
+  HDep.getAction()->propagateHostOffloadInfo(HDep.getOffloadKinds(),
+                                             HDep.getBoundArch());
+}
+
 void SPIRVTranslatorJobAction::anchor() {}
 
 SPIRVTranslatorJobAction::SPIRVTranslatorJobAction(Action *Input,
@@ -457,16 +476,11 @@ SPIRCheckJobAction::SPIRCheckJobAction(Action *Input, types::ID Type)
 
 void SYCLPostLinkJobAction::anchor() {}
 
-SYCLPostLinkJobAction::SYCLPostLinkJobAction(Action *Input, types::ID Type)
-    : JobAction(SYCLPostLinkJobClass, Input, Type) {}
-
-void PartialLinkJobAction::anchor() {}
-
-PartialLinkJobAction::PartialLinkJobAction(Action *Input, types::ID Type)
-    : JobAction(PartialLinkJobClass, Input, Type) {}
-
-PartialLinkJobAction::PartialLinkJobAction(ActionList &Inputs, types::ID Type)
-    : JobAction(PartialLinkJobClass, Inputs, Type) {}
+SYCLPostLinkJobAction::SYCLPostLinkJobAction(Action *Input,
+                                             types::ID ShadowOutputType,
+                                             types::ID TrueOutputType)
+    : JobAction(SYCLPostLinkJobClass, Input, ShadowOutputType),
+      TrueOutputType(TrueOutputType) {}
 
 void BackendCompileJobAction::anchor() {}
 
@@ -480,12 +494,17 @@ BackendCompileJobAction::BackendCompileJobAction(Action *Input,
 
 void FileTableTformJobAction::anchor() {}
 
-FileTableTformJobAction::FileTableTformJobAction(Action *Input, types::ID Type)
-    : JobAction(FileTableTformJobClass, Input, Type) {}
+FileTableTformJobAction::FileTableTformJobAction(Action *Input,
+                                                 types::ID ShadowOutputType,
+                                                 types::ID TrueOutputType)
+    : JobAction(FileTableTformJobClass, Input, ShadowOutputType),
+      TrueOutputType(TrueOutputType) {}
 
 FileTableTformJobAction::FileTableTformJobAction(ActionList &Inputs,
-                                                 types::ID Type)
-    : JobAction(FileTableTformJobClass, Inputs, Type) {}
+                                                 types::ID ShadowOutputType,
+                                                 types::ID TrueOutputType)
+    : JobAction(FileTableTformJobClass, Inputs, ShadowOutputType),
+      TrueOutputType(TrueOutputType) {}
 
 void FileTableTformJobAction::addExtractColumnTform(StringRef ColumnName,
                                                     bool WithColTitle) {
@@ -498,7 +517,41 @@ void FileTableTformJobAction::addReplaceColumnTform(StringRef From,
   Tforms.emplace_back(Tform(Tform::REPLACE, {From, To}));
 }
 
+void FileTableTformJobAction::addReplaceCellTform(StringRef ColumnName,
+                                                  int Row) {
+  Tforms.emplace_back(
+      Tform(Tform::REPLACE_CELL, {ColumnName, std::to_string(Row)}));
+}
+
+void FileTableTformJobAction::addRenameColumnTform(StringRef From,
+                                                   StringRef To) {
+  Tforms.emplace_back(Tform(Tform::RENAME, {From, To}));
+}
+
+void FileTableTformJobAction::addCopySingleFileTform(StringRef ColumnName,
+                                                     int Row) {
+  Tforms.emplace_back(
+      Tform(Tform::COPY_SINGLE_FILE, {ColumnName, std::to_string(Row)}));
+}
+
+void AppendFooterJobAction::anchor() {}
+
+AppendFooterJobAction::AppendFooterJobAction(Action *Input, types::ID Type)
+    : JobAction(AppendFooterJobClass, Input, Type) {}
+
 void StaticLibJobAction::anchor() {}
 
 StaticLibJobAction::StaticLibJobAction(ActionList &Inputs, types::ID Type)
     : JobAction(StaticLibJobClass, Inputs, Type) {}
+
+ForEachWrappingAction::ForEachWrappingAction(JobAction *TFormInput,
+                                             JobAction *Job)
+    : Action(ForEachWrappingClass, {TFormInput, Job}, Job->getType()) {}
+
+JobAction *ForEachWrappingAction::getTFormInput() const {
+  return llvm::cast<JobAction>(getInputs()[0]);
+}
+
+JobAction *ForEachWrappingAction::getJobAction() const {
+  return llvm::cast<JobAction>(getInputs()[1]);
+}

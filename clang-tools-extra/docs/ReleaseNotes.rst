@@ -1,5 +1,5 @@
 ====================================================
-Extra Clang Tools 12.0.0 (In-Progress) Release Notes
+Extra Clang Tools 14.0.0 (In-Progress) Release Notes
 ====================================================
 
 .. contents::
@@ -10,7 +10,7 @@ Written by the `LLVM Team <https://llvm.org/>`_
 
 .. warning::
 
-   These are in-progress notes for the upcoming Extra Clang Tools 12 release.
+   These are in-progress notes for the upcoming Extra Clang Tools 14 release.
    Release notes for previous releases can be found on
    `the Download Page <https://releases.llvm.org/download.html>`_.
 
@@ -18,7 +18,7 @@ Introduction
 ============
 
 This document contains the release notes for the Extra Clang Tools, part of the
-Clang release 12.0.0. Here we describe the status of the Extra Clang Tools in
+Clang release 14.0.0. Here we describe the status of the Extra Clang Tools in
 some detail, including major improvements from the previous release and new
 feature work. All LLVM releases may be downloaded from the `LLVM releases web
 site <https://llvm.org/releases/>`_.
@@ -32,7 +32,7 @@ main Clang web page, this document applies to the *next* release, not
 the current one. To see the release notes for a specific release, please
 see the `releases page <https://llvm.org/releases/>`_.
 
-What's New in Extra Clang Tools 12.0.0?
+What's New in Extra Clang Tools 14.0.0?
 =======================================
 
 Some of the major new features and improvements to Extra Clang Tools are listed
@@ -68,6 +68,23 @@ Improvements to clang-tidy
 --------------------------
 
 The improvements are...
+
+New checks
+^^^^^^^^^^
+
+- New :doc:`readability-identifier-length
+  <clang-tidy/checks/readability-identifier-length>` check.
+
+  Reports identifiers whose names are too short. Currently checks local variables and function parameters only.
+
+New check aliases
+^^^^^^^^^^^^^^^^^
+
+Changes in existing checks
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Removed checks
+^^^^^^^^^^^^^^
 
 Improvements to include-fixer
 -----------------------------

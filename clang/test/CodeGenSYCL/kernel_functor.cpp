@@ -1,9 +1,11 @@
-// RUN: %clang_cc1 -I %S/Inputs -fsycl -fsycl-is-device -fsycl-int-header=%t.h %s -o %t.spv
-// RUN: FileCheck %s --input-file=%t.h
+// RUN: %clang_cc1 -triple x86_64-linux-gnu -fsycl-is-device -fno-sycl-unnamed-lambda -fsycl-int-header=%t.h %s -o /dev/null
+// RUN: FileCheck %s --input-file=%t.h --check-prefixes=NUL,CHECK
+// RUN: %clang_cc1 -triple x86_64-linux-gnu -fsycl-is-device -fsycl-int-header=%t.h %s -o /dev/null
+// RUN: FileCheck %s --input-file=%t.h --check-prefixes=UL,CHECK
 
 // Checks that functors are supported as SYCL kernels.
 
-#include "sycl.hpp"
+#include "Inputs/sycl.hpp"
 
 constexpr auto sycl_read_write = cl::sycl::access::mode::read_write;
 constexpr auto sycl_global_buffer = cl::sycl::access::target::global_buffer;
@@ -109,9 +111,13 @@ int main() {
 
 #ifndef __SYCL_DEVICE_ONLY__
   cl::sycl::detail::KernelInfo<ns::Functor2>::getName();
-  // CHECK: ns::Functor2
+  // NUL: KernelInfo<::ns::Functor2>
+  // UL: KernelInfoData<'_', 'Z', 'T', 'S', 'N', '2', 'n', 's', '8', 'F', 'u', 'n', 'c', 't', 'o', 'r', '2', 'E'>
+  // CHECK: getName() { return "_ZTSN2ns8Functor2E"; }
   cl::sycl::detail::KernelInfo<TmplConstFunctor<int>>::getName();
-  // CHECK: TmplConstFunctor<int>
+  // NUL: KernelInfo<::TmplConstFunctor<int>>
+  // UL: KernelInfoData<'_', 'Z', 'T', 'S', '1', '6', 'T', 'm', 'p', 'l', 'C', 'o', 'n', 's', 't', 'F', 'u', 'n', 'c', 't', 'o', 'r', 'I', 'i', 'E'>
+  // CHECK: getName() { return "_ZTS16TmplConstFunctorIiE"; }
 #endif // __SYCL_DEVICE_ONLY__
 
   return 0;

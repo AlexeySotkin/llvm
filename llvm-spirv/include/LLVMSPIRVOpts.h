@@ -39,10 +39,18 @@
 #ifndef SPIRV_LLVMSPIRVOPTS_H
 #define SPIRV_LLVMSPIRVOPTS_H
 
+#include <llvm/ADT/Optional.h>
+#include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/StringRef.h>
+
 #include <cassert>
 #include <cstdint>
 #include <map>
 #include <unordered_map>
+
+namespace llvm {
+class IntrinsicInst;
+} // namespace llvm
 
 namespace SPIRV {
 
@@ -71,10 +79,13 @@ enum class BIsRepresentation : uint32_t { OpenCL12, OpenCL20, SPIRVFriendlyIR };
 
 enum class FPContractMode : uint32_t { On, Off, Fast };
 
+enum class DebugInfoEIS : uint32_t { SPIRV_Debug, OpenCL_DebugInfo_100 };
+
 /// \brief Helper class to manage SPIR-V translation
 class TranslatorOpts {
 public:
   using ExtensionsStatusMap = std::map<ExtensionID, bool>;
+  using ArgList = llvm::SmallVector<llvm::StringRef, 4>;
 
   TranslatorOpts() = default;
 
@@ -137,13 +148,36 @@ public:
 
   FPContractMode getFPContractMode() const { return FPCMode; }
 
-  bool isSPIRVAllowUnknownIntrinsicsEnabled() const noexcept {
-    return SPIRVAllowUnknownIntrinsics;
+  bool isUnknownIntrinsicAllowed(llvm::IntrinsicInst *II) const noexcept;
+  bool isSPIRVAllowUnknownIntrinsicsEnabled() const noexcept;
+  void setSPIRVAllowUnknownIntrinsics(ArgList IntrinsicPrefixList) noexcept;
+
+  bool allowExtraDIExpressions() const noexcept {
+    return AllowExtraDIExpressions;
   }
 
-  void
-  setSPIRVAllowUnknownIntrinsicsEnabled(bool AllowUnknownIntrinsics) noexcept {
-    SPIRVAllowUnknownIntrinsics = AllowUnknownIntrinsics;
+  void setAllowExtraDIExpressionsEnabled(bool Allow) noexcept {
+    AllowExtraDIExpressions = Allow;
+  }
+
+  DebugInfoEIS getDebugInfoEIS() const { return DebugInfoVersion; }
+
+  void setDebugInfoEIS(DebugInfoEIS EIS) { DebugInfoVersion = EIS; }
+
+  bool shouldReplaceLLVMFmulAddWithOpenCLMad() const noexcept {
+    return ReplaceLLVMFmulAddWithOpenCLMad;
+  }
+
+  void setReplaceLLVMFmulAddWithOpenCLMad(bool Value) noexcept {
+    ReplaceLLVMFmulAddWithOpenCLMad = Value;
+  }
+
+  bool shouldPreserveOCLKernelArgTypeMetadataThroughString() const noexcept {
+    return PreserveOCLKernelArgTypeMetadataThroughString;
+  }
+
+  void setPreserveOCLKernelArgTypeMetadataThroughString(bool Value) noexcept {
+    PreserveOCLKernelArgTypeMetadataThroughString = Value;
   }
 
 private:
@@ -171,7 +205,21 @@ private:
 
   // Unknown LLVM intrinsics will be translated as external function calls in
   // SPIR-V
-  bool SPIRVAllowUnknownIntrinsics = false;
+  llvm::Optional<ArgList> SPIRVAllowUnknownIntrinsics{};
+
+  // Enable support for extra DIExpression opcodes not listed in the SPIR-V
+  // DebugInfo specification.
+  bool AllowExtraDIExpressions = false;
+
+  DebugInfoEIS DebugInfoVersion = DebugInfoEIS::OpenCL_DebugInfo_100;
+
+  // Controls whether llvm.fmuladd.* should be replaced with mad from OpenCL
+  // extended instruction set or with a simple fmul + fadd
+  bool ReplaceLLVMFmulAddWithOpenCLMad = true;
+
+  // Add a workaround to preserve OpenCL kernel_arg_type and
+  // kernel_arg_type_qual metadata through OpString
+  bool PreserveOCLKernelArgTypeMetadataThroughString = false;
 };
 
 } // namespace SPIRV

@@ -10,6 +10,8 @@
 #ifndef __IMMINTRIN_H
 #define __IMMINTRIN_H
 
+#include <x86gprintrin.h>
+
 #if !(defined(_MSC_VER) || defined(__SCE__)) || __has_feature(modules) ||      \
     defined(__MMX__)
 #include <mmintrin.h>
@@ -68,11 +70,6 @@
 #if !(defined(_MSC_VER) || defined(__SCE__)) || __has_feature(modules) ||      \
     defined(__F16C__)
 #include <f16cintrin.h>
-#endif
-
-#if !(defined(_MSC_VER) || defined(__SCE__)) || __has_feature(modules) ||      \
-    defined(__VPCLMULQDQ__)
-#include <vpclmulqdqintrin.h>
 #endif
 
 /* No feature check desired due to internal checks */
@@ -144,6 +141,11 @@
 #endif
 
 #if !(defined(_MSC_VER) || defined(__SCE__)) || __has_feature(modules) ||      \
+    defined(__AVXVNNI__)
+#include <avxvnniintrin.h>
+#endif
+
+#if !(defined(_MSC_VER) || defined(__SCE__)) || __has_feature(modules) ||      \
     defined(__AVX512DQ__)
 #include <avx512dqintrin.h>
 #endif
@@ -208,6 +210,20 @@
 #include <avx512pfintrin.h>
 #endif
 
+/*
+ * FIXME: _Float16 type is legal only when HW support float16 operation.
+ * We use __AVX512FP16__ to identify if float16 is supported or not, so
+ * when float16 is not supported, the related header is not included.
+ *
+ */
+#if defined(__AVX512FP16__)
+#include <avx512fp16intrin.h>
+#endif
+
+#if defined(__AVX512FP16__) && defined(__AVX512VL__)
+#include <avx512vlfp16intrin.h>
+#endif
+
 #if !(defined(_MSC_VER) || defined(__SCE__)) || __has_feature(modules) ||      \
     defined(__AVX512BF16__)
 #include <avx512bf16intrin.h>
@@ -221,6 +237,11 @@
 #if !(defined(_MSC_VER) || defined(__SCE__)) || __has_feature(modules) ||      \
     defined(__PKU__)
 #include <pkuintrin.h>
+#endif
+
+#if !(defined(_MSC_VER) || defined(__SCE__)) || __has_feature(modules) ||      \
+    defined(__VPCLMULQDQ__)
+#include <vpclmulqdqintrin.h>
 #endif
 
 #if !(defined(_MSC_VER) || defined(__SCE__)) || __has_feature(modules) ||      \
@@ -469,6 +490,11 @@ _storebe_i64(void * __P, long long __D) {
 #if !(defined(_MSC_VER) || defined(__SCE__)) || __has_feature(modules) ||      \
     defined(__INVPCID__)
 #include <invpcidintrin.h>
+#endif
+
+#if !(defined(_MSC_VER) || defined(__SCE__)) || __has_feature(modules) ||      \
+    defined(__KL__) || defined(__WIDEKL__)
+#include <keylockerintrin.h>
 #endif
 
 #if !(defined(_MSC_VER) || defined(__SCE__)) || __has_feature(modules) ||      \

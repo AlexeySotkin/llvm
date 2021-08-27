@@ -42,8 +42,8 @@ std::unique_ptr<AppleDWARFIndex> AppleDWARFIndex::Create(
   if (!apple_objc_table_up->IsValid())
     apple_objc_table_up.reset();
 
-  if (apple_names_table_up || apple_names_table_up || apple_types_table_up ||
-      apple_objc_table_up)
+  if (apple_names_table_up || apple_namespaces_table_up ||
+      apple_types_table_up || apple_objc_table_up)
     return std::make_unique<AppleDWARFIndex>(
         module, std::move(apple_names_table_up),
         std::move(apple_namespaces_table_up), std::move(apple_types_table_up),
@@ -75,12 +75,15 @@ void AppleDWARFIndex::GetGlobalVariables(
 }
 
 void AppleDWARFIndex::GetGlobalVariables(
-    const DWARFUnit &cu, llvm::function_ref<bool(DWARFDIE die)> callback) {
+    DWARFUnit &cu, llvm::function_ref<bool(DWARFDIE die)> callback) {
   if (!m_apple_names_up)
     return;
 
+  lldbassert(!cu.GetSymbolFileDWARF().GetDwoNum());
+  const DWARFUnit &non_skeleton_cu = cu.GetNonSkeletonUnit();
   DWARFMappedHash::DIEInfoArray hash_data;
-  m_apple_names_up->AppendAllDIEsInRange(cu.GetOffset(), cu.GetNextUnitOffset(),
+  m_apple_names_up->AppendAllDIEsInRange(non_skeleton_cu.GetOffset(),
+                                         non_skeleton_cu.GetNextUnitOffset(),
                                          hash_data);
   DWARFMappedHash::ExtractDIEArray(hash_data, DIERefCallback(callback));
 }

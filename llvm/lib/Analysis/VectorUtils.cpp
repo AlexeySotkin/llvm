@@ -43,13 +43,18 @@ static cl::opt<unsigned> MaxInterleaveGroupFactor(
 /// hasVectorInstrinsicScalarOpd).
 bool llvm::isTriviallyVectorizable(Intrinsic::ID ID) {
   switch (ID) {
-  case Intrinsic::bswap: // Begin integer bit-manipulation.
+  case Intrinsic::abs:   // Begin integer bit-manipulation.
+  case Intrinsic::bswap:
   case Intrinsic::bitreverse:
   case Intrinsic::ctpop:
   case Intrinsic::ctlz:
   case Intrinsic::cttz:
   case Intrinsic::fshl:
   case Intrinsic::fshr:
+  case Intrinsic::smax:
+  case Intrinsic::smin:
+  case Intrinsic::umax:
+  case Intrinsic::umin:
   case Intrinsic::sadd_sat:
   case Intrinsic::ssub_sat:
   case Intrinsic::uadd_sat:
@@ -94,6 +99,7 @@ bool llvm::isTriviallyVectorizable(Intrinsic::ID ID) {
 bool llvm::hasVectorInstrinsicScalarOpd(Intrinsic::ID ID,
                                         unsigned ScalarOpdIdx) {
   switch (ID) {
+  case Intrinsic::abs:
   case Intrinsic::ctlz:
   case Intrinsic::cttz:
   case Intrinsic::powi:
@@ -103,6 +109,16 @@ bool llvm::hasVectorInstrinsicScalarOpd(Intrinsic::ID ID,
   case Intrinsic::umul_fix:
   case Intrinsic::umul_fix_sat:
     return (ScalarOpdIdx == 2);
+  default:
+    return false;
+  }
+}
+
+bool llvm::hasVectorInstrinsicOverloadedScalarOpd(Intrinsic::ID ID,
+                                                  unsigned ScalarOpdIdx) {
+  switch (ID) {
+  case Intrinsic::powi:
+    return (ScalarOpdIdx == 1);
   default:
     return false;
   }
@@ -119,7 +135,8 @@ Intrinsic::ID llvm::getVectorIntrinsicIDForCall(const CallInst *CI,
 
   if (isTriviallyVectorizable(ID) || ID == Intrinsic::lifetime_start ||
       ID == Intrinsic::lifetime_end || ID == Intrinsic::assume ||
-      ID == Intrinsic::sideeffect)
+      ID == Intrinsic::experimental_noalias_scope_decl ||
+      ID == Intrinsic::sideeffect || ID == Intrinsic::pseudoprobe)
     return ID;
   return Intrinsic::not_intrinsic;
 }
@@ -130,7 +147,7 @@ Intrinsic::ID llvm::getVectorIntrinsicIDForCall(const CallInst *CI,
 unsigned llvm::getGEPInductionOperand(const GetElementPtrInst *Gep) {
   const DataLayout &DL = Gep->getModule()->getDataLayout();
   unsigned LastOperand = Gep->getNumOperands() - 1;
-  unsigned GEPAllocSize = DL.getTypeAllocSize(Gep->getResultElementType());
+  TypeSize GEPAllocSize = DL.getTypeAllocSize(Gep->getResultElementType());
 
   // Walk backwards and try to peel off zeros.
   while (LastOperand > 1 && match(Gep->getOperand(LastOperand), m_Zero())) {
@@ -202,7 +219,7 @@ Value *llvm::getStrideFromPointer(Value *Ptr, ScalarEvolution *SE, Loop *Lp) {
 
   if (Ptr != OrigPtr)
     // Strip off casts.
-    while (const SCEVCastExpr *C = dyn_cast<SCEVCastExpr>(V))
+    while (const SCEVIntegralCastExpr *C = dyn_cast<SCEVIntegralCastExpr>(V))
       V = C->getOperand();
 
   const SCEVAddRecExpr *S = dyn_cast<SCEVAddRecExpr>(V);
@@ -235,7 +252,7 @@ Value *llvm::getStrideFromPointer(Value *Ptr, ScalarEvolution *SE, Loop *Lp) {
 
   // Strip off casts.
   Type *StripedOffRecurrenceCast = nullptr;
-  if (const SCEVCastExpr *C = dyn_cast<SCEVCastExpr>(V)) {
+  if (const SCEVIntegralCastExpr *C = dyn_cast<SCEVIntegralCastExpr>(V)) {
     StripedOffRecurrenceCast = C->getType();
     V = C->getOperand();
   }
@@ -283,6 +300,10 @@ Value *llvm::findScalarElement(Value *V, unsigned EltNo) {
     // inserted value.
     if (EltNo == IIElt)
       return III->getOperand(1);
+
+    // Guard against infinite loop on malformed, unreachable IR.
+    if (III == III->getOperand(0))
+      return nullptr;
 
     // Otherwise, the insertelement doesn't modify the value, recurse on its
     // vector input.
@@ -336,7 +357,7 @@ int llvm::getSplatIndex(ArrayRef<int> Mask) {
 /// This function is not fully general. It checks only 2 cases:
 /// the input value is (1) a splat constant vector or (2) a sequence
 /// of instructions that broadcasts a scalar at element 0.
-const llvm::Value *llvm::getSplatValue(const Value *V) {
+Value *llvm::getSplatValue(const Value *V) {
   if (isa<VectorType>(V->getType()))
     if (auto *C = dyn_cast<Constant>(V))
       return C->getSplatValue();
@@ -351,12 +372,8 @@ const llvm::Value *llvm::getSplatValue(const Value *V) {
   return nullptr;
 }
 
-// This setting is based on its counterpart in value tracking, but it could be
-// adjusted if needed.
-const unsigned MaxDepth = 6;
-
 bool llvm::isSplatValue(const Value *V, int Index, unsigned Depth) {
-  assert(Depth <= MaxDepth && "Limit Search Depth");
+  assert(Depth <= MaxAnalysisRecursionDepth && "Limit Search Depth");
 
   if (isa<VectorType>(V->getType())) {
     if (isa<UndefValue>(V))
@@ -383,7 +400,7 @@ bool llvm::isSplatValue(const Value *V, int Index, unsigned Depth) {
   }
 
   // The remaining tests are all recursive, so bail out if we hit the limit.
-  if (Depth++ == MaxDepth)
+  if (Depth++ == MaxAnalysisRecursionDepth)
     return false;
 
   // If both operands of a binop are splats, the result is a splat.
@@ -414,8 +431,7 @@ void llvm::narrowShuffleMaskElts(int Scale, ArrayRef<int> Mask,
   ScaledMask.clear();
   for (int MaskElt : Mask) {
     if (MaskElt >= 0) {
-      assert(((uint64_t)Scale * MaskElt + (Scale - 1)) <=
-                 std::numeric_limits<int32_t>::max() &&
+      assert(((uint64_t)Scale * MaskElt + (Scale - 1)) <= INT32_MAX &&
              "Overflowed 32-bits");
     }
     for (int SliceElt = 0; SliceElt != Scale; ++SliceElt)
@@ -580,8 +596,8 @@ llvm::computeMinimumValueSizes(ArrayRef<BasicBlock *> Blocks, DemandedBits &DB,
 
   for (auto I = ECs.begin(), E = ECs.end(); I != E; ++I) {
     uint64_t LeaderDemandedBits = 0;
-    for (auto MI = ECs.member_begin(I), ME = ECs.member_end(); MI != ME; ++MI)
-      LeaderDemandedBits |= DBits[*MI];
+    for (Value *M : llvm::make_range(ECs.member_begin(I), ECs.member_end()))
+      LeaderDemandedBits |= DBits[M];
 
     uint64_t MinBW = (sizeof(LeaderDemandedBits) * 8) -
                      llvm::countLeadingZeros(LeaderDemandedBits);
@@ -594,22 +610,22 @@ llvm::computeMinimumValueSizes(ArrayRef<BasicBlock *> Blocks, DemandedBits &DB,
     // indvars.
     // If we are required to shrink a PHI, abandon this entire equivalence class.
     bool Abort = false;
-    for (auto MI = ECs.member_begin(I), ME = ECs.member_end(); MI != ME; ++MI)
-      if (isa<PHINode>(*MI) && MinBW < (*MI)->getType()->getScalarSizeInBits()) {
+    for (Value *M : llvm::make_range(ECs.member_begin(I), ECs.member_end()))
+      if (isa<PHINode>(M) && MinBW < M->getType()->getScalarSizeInBits()) {
         Abort = true;
         break;
       }
     if (Abort)
       continue;
 
-    for (auto MI = ECs.member_begin(I), ME = ECs.member_end(); MI != ME; ++MI) {
-      if (!isa<Instruction>(*MI))
+    for (Value *M : llvm::make_range(ECs.member_begin(I), ECs.member_end())) {
+      if (!isa<Instruction>(M))
         continue;
-      Type *Ty = (*MI)->getType();
-      if (Roots.count(*MI))
-        Ty = cast<Instruction>(*MI)->getOperand(0)->getType();
+      Type *Ty = M->getType();
+      if (Roots.count(M))
+        Ty = cast<Instruction>(M)->getOperand(0)->getType();
       if (MinBW < Ty->getScalarSizeInBits())
-        MinBWs[cast<Instruction>(*MI)] = MinBW;
+        MinBWs[cast<Instruction>(M)] = MinBW;
     }
   }
 
@@ -702,6 +718,8 @@ MDNode *llvm::intersectAccessGroups(const Instruction *Inst1,
 
 /// \returns \p I after propagating metadata from \p VL.
 Instruction *llvm::propagateMetadata(Instruction *Inst, ArrayRef<Value *> VL) {
+  if (VL.empty())
+    return Inst;
   Instruction *I0 = cast<Instruction>(VL[0]);
   SmallVector<std::pair<unsigned, MDNode *>, 4> Metadata;
   I0->getAllMetadataOtherThanDebugLoc(Metadata);
@@ -824,8 +842,7 @@ static Value *concatenateTwoVectors(IRBuilderBase &Builder, Value *V1,
   if (NumElts1 > NumElts2) {
     // Extend with UNDEFs.
     V2 = Builder.CreateShuffleVector(
-        V2, UndefValue::get(VecTy2),
-        createSequentialMask(0, NumElts2, NumElts1 - NumElts2));
+        V2, createSequentialMask(0, NumElts2, NumElts1 - NumElts2));
   }
 
   return Builder.CreateShuffleVector(
@@ -861,11 +878,19 @@ Value *llvm::concatenateVectors(IRBuilderBase &Builder,
 }
 
 bool llvm::maskIsAllZeroOrUndef(Value *Mask) {
+  assert(isa<VectorType>(Mask->getType()) &&
+         isa<IntegerType>(Mask->getType()->getScalarType()) &&
+         cast<IntegerType>(Mask->getType()->getScalarType())->getBitWidth() ==
+             1 &&
+         "Mask must be a vector of i1");
+
   auto *ConstMask = dyn_cast<Constant>(Mask);
   if (!ConstMask)
     return false;
   if (ConstMask->isNullValue() || isa<UndefValue>(ConstMask))
     return true;
+  if (isa<ScalableVectorType>(ConstMask->getType()))
+    return false;
   for (unsigned
            I = 0,
            E = cast<FixedVectorType>(ConstMask->getType())->getNumElements();
@@ -878,13 +903,20 @@ bool llvm::maskIsAllZeroOrUndef(Value *Mask) {
   return true;
 }
 
-
 bool llvm::maskIsAllOneOrUndef(Value *Mask) {
+  assert(isa<VectorType>(Mask->getType()) &&
+         isa<IntegerType>(Mask->getType()->getScalarType()) &&
+         cast<IntegerType>(Mask->getType()->getScalarType())->getBitWidth() ==
+             1 &&
+         "Mask must be a vector of i1");
+
   auto *ConstMask = dyn_cast<Constant>(Mask);
   if (!ConstMask)
     return false;
   if (ConstMask->isAllOnesValue() || isa<UndefValue>(ConstMask))
     return true;
+  if (isa<ScalableVectorType>(ConstMask->getType()))
+    return false;
   for (unsigned
            I = 0,
            E = cast<FixedVectorType>(ConstMask->getType())->getNumElements();
@@ -900,6 +932,11 @@ bool llvm::maskIsAllOneOrUndef(Value *Mask) {
 /// TODO: This is a lot like known bits, but for
 /// vectors.  Is there something we can common this with?
 APInt llvm::possiblyDemandedEltsInMask(Value *Mask) {
+  assert(isa<FixedVectorType>(Mask->getType()) &&
+         isa<IntegerType>(Mask->getType()->getScalarType()) &&
+         cast<IntegerType>(Mask->getType()->getScalarType())->getBitWidth() ==
+             1 &&
+         "Mask must be a fixed width vector of i1");
 
   const unsigned VWidth =
       cast<FixedVectorType>(Mask->getType())->getNumElements();
@@ -931,12 +968,11 @@ void InterleavedAccessInfo::collectConstStrideAccesses(
   DFS.perform(LI);
   for (BasicBlock *BB : make_range(DFS.beginRPO(), DFS.endRPO()))
     for (auto &I : *BB) {
-      auto *LI = dyn_cast<LoadInst>(&I);
-      auto *SI = dyn_cast<StoreInst>(&I);
-      if (!LI && !SI)
-        continue;
-
       Value *Ptr = getLoadStorePointerOperand(&I);
+      if (!Ptr)
+        continue;
+      Type *ElementTy = getLoadStoreType(&I);
+
       // We don't check wrapping here because we don't know yet if Ptr will be
       // part of a full group or a group with gaps. Checking wrapping for all
       // pointers (even those that end up in groups with no gaps) will be overly
@@ -948,8 +984,7 @@ void InterleavedAccessInfo::collectConstStrideAccesses(
                                     /*Assume=*/true, /*ShouldCheckWrap=*/false);
 
       const SCEV *Scev = replaceSymbolicStrideSCEV(PSE, Strides, Ptr);
-      PointerType *PtrTy = cast<PointerType>(Ptr->getType());
-      uint64_t Size = DL.getTypeAllocSize(PtrTy->getElementType());
+      uint64_t Size = DL.getTypeAllocSize(ElementTy);
       AccessStrideInfo[&I] = StrideDescriptor(Stride, Scev, Size,
                                               getLoadStoreAlignment(&I));
     }
@@ -1158,15 +1193,23 @@ void InterleavedAccessInfo::analyzeInterleaving(
     } // Iteration over A accesses.
   }   // Iteration over B accesses.
 
-  // Remove interleaved store groups with gaps.
-  for (auto *Group : StoreGroups)
-    if (Group->getNumMembers() != Group->getFactor()) {
-      LLVM_DEBUG(
-          dbgs() << "LV: Invalidate candidate interleaved store group due "
-                    "to gaps.\n");
-      releaseGroup(Group);
-    }
-  // Remove interleaved groups with gaps (currently only loads) whose memory
+  auto InvalidateGroupIfMemberMayWrap = [&](InterleaveGroup<Instruction> *Group,
+                                            int Index,
+                                            std::string FirstOrLast) -> bool {
+    Instruction *Member = Group->getMember(Index);
+    assert(Member && "Group member does not exist");
+    Value *MemberPtr = getLoadStorePointerOperand(Member);
+    if (getPtrStride(PSE, MemberPtr, TheLoop, Strides, /*Assume=*/false,
+                     /*ShouldCheckWrap=*/true))
+      return false;
+    LLVM_DEBUG(dbgs() << "LV: Invalidate candidate interleaved group due to "
+                      << FirstOrLast
+                      << " group member potentially pointer-wrapping.\n");
+    releaseGroup(Group);
+    return true;
+  };
+
+  // Remove interleaved groups with gaps whose memory
   // accesses may wrap around. We have to revisit the getPtrStride analysis,
   // this time with ShouldCheckWrap=true, since collectConstStrideAccesses does
   // not check wrapping (see documentation there).
@@ -1192,26 +1235,12 @@ void InterleavedAccessInfo::analyzeInterleaving(
     // So we check only group member 0 (which is always guaranteed to exist),
     // and group member Factor - 1; If the latter doesn't exist we rely on
     // peeling (if it is a non-reversed accsess -- see Case 3).
-    Value *FirstMemberPtr = getLoadStorePointerOperand(Group->getMember(0));
-    if (!getPtrStride(PSE, FirstMemberPtr, TheLoop, Strides, /*Assume=*/false,
-                      /*ShouldCheckWrap=*/true)) {
-      LLVM_DEBUG(
-          dbgs() << "LV: Invalidate candidate interleaved group due to "
-                    "first group member potentially pointer-wrapping.\n");
-      releaseGroup(Group);
+    if (InvalidateGroupIfMemberMayWrap(Group, 0, std::string("first")))
       continue;
-    }
-    Instruction *LastMember = Group->getMember(Group->getFactor() - 1);
-    if (LastMember) {
-      Value *LastMemberPtr = getLoadStorePointerOperand(LastMember);
-      if (!getPtrStride(PSE, LastMemberPtr, TheLoop, Strides, /*Assume=*/false,
-                        /*ShouldCheckWrap=*/true)) {
-        LLVM_DEBUG(
-            dbgs() << "LV: Invalidate candidate interleaved group due to "
-                      "last group member potentially pointer-wrapping.\n");
-        releaseGroup(Group);
-      }
-    } else {
+    if (Group->getMember(Group->getFactor() - 1))
+      InvalidateGroupIfMemberMayWrap(Group, Group->getFactor() - 1,
+                                     std::string("last"));
+    else {
       // Case 3: A non-reversed interleaved load group with gaps: We need
       // to execute at least one scalar epilogue iteration. This will ensure
       // we don't speculatively access memory out-of-bounds. We only need
@@ -1228,6 +1257,39 @@ void InterleavedAccessInfo::analyzeInterleaving(
           dbgs() << "LV: Interleaved group requires epilogue iteration.\n");
       RequiresScalarEpilogue = true;
     }
+  }
+
+  for (auto *Group : StoreGroups) {
+    // Case 1: A full group. Can Skip the checks; For full groups, if the wide
+    // store would wrap around the address space we would do a memory access at
+    // nullptr even without the transformation.
+    if (Group->getNumMembers() == Group->getFactor())
+      continue;
+
+    // Interleave-store-group with gaps is implemented using masked wide store.
+    // Remove interleaved store groups with gaps if
+    // masked-interleaved-accesses are not enabled by the target.
+    if (!EnablePredicatedInterleavedMemAccesses) {
+      LLVM_DEBUG(
+          dbgs() << "LV: Invalidate candidate interleaved store group due "
+                    "to gaps.\n");
+      releaseGroup(Group);
+      continue;
+    }
+
+    // Case 2: If first and last members of the group don't wrap this implies
+    // that all the pointers in the group don't wrap.
+    // So we check only group member 0 (which is always guaranteed to exist),
+    // and the last group member. Case 3 (scalar epilog) is not relevant for
+    // stores with gaps, which are implemented with masked-store (rather than
+    // speculative access, as in loads).
+    if (InvalidateGroupIfMemberMayWrap(Group, 0, std::string("first")))
+      continue;
+    for (int Index = Group->getFactor() - 1; Index > 0; Index--)
+      if (Group->getMember(Index)) {
+        InvalidateGroupIfMemberMayWrap(Group, Index, std::string("last"));
+        break;
+      }
   }
 }
 
@@ -1274,10 +1336,14 @@ void InterleaveGroup<Instruction>::addMetadata(Instruction *NewInst) const {
 
 std::string VFABI::mangleTLIVectorName(StringRef VectorName,
                                        StringRef ScalarName, unsigned numArgs,
-                                       unsigned VF) {
+                                       ElementCount VF) {
   SmallString<256> Buffer;
   llvm::raw_svector_ostream Out(Buffer);
-  Out << "_ZGV" << VFABI::_LLVM_ << "N" << VF;
+  Out << "_ZGV" << VFABI::_LLVM_ << "N";
+  if (VF.isScalable())
+    Out << 'x';
+  else
+    Out << VF.getFixedValue();
   for (unsigned I = 0; I < numArgs; ++I)
     Out << "v";
   Out << "_" << ScalarName << "(" << VectorName << ")";

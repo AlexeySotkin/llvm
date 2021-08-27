@@ -19,6 +19,7 @@
 #include <CL/sycl/access/access.hpp>
 #include <CL/sycl/detail/accessor_impl.hpp>
 #include <CL/sycl/detail/cg.hpp>
+#include <detail/program_manager/program_manager.hpp>
 
 __SYCL_INLINE_NAMESPACE(cl) {
 namespace sycl {
@@ -32,6 +33,7 @@ class DispatchHostTask;
 using QueueImplPtr = std::shared_ptr<detail::queue_impl>;
 using EventImplPtr = std::shared_ptr<detail::event_impl>;
 using ContextImplPtr = std::shared_ptr<detail::context_impl>;
+using StreamImplPtr = std::shared_ptr<detail::stream_impl>;
 
 class Command;
 class AllocaCommand;
@@ -105,9 +107,11 @@ public:
 
   Command(CommandType Type, QueueImplPtr Queue);
 
-  void addDep(DepDesc NewDep);
+  /// \return an optional connection cmd to enqueue
+  [[nodiscard]] Command *addDep(DepDesc NewDep);
 
-  void addDep(EventImplPtr Event);
+  /// \return an optional connection cmd to enqueue
+  [[nodiscard]] Command *addDep(EventImplPtr Event);
 
   void addUser(Command *NewUser) { MUsers.insert(NewUser); }
 
@@ -120,7 +124,7 @@ public:
   /// \param Blocking if this argument is true, function will wait for the
   ///        command to be unblocked before calling enqueueImp.
   /// \return true if the command is enqueued.
-  bool enqueue(EnqueueResultT &EnqueueResult, BlockingT Blocking);
+  virtual bool enqueue(EnqueueResultT &EnqueueResult, BlockingT Blocking);
 
   bool isFinished();
 
@@ -128,9 +132,13 @@ public:
     return MEnqueueStatus == EnqueueResultT::SyclEnqueueSuccess;
   }
 
-  std::shared_ptr<queue_impl> getQueue() const { return MQueue; }
+  bool isEnqueueBlocked() const {
+    return MEnqueueStatus == EnqueueResultT::SyclEnqueueBlocked;
+  }
 
-  std::shared_ptr<event_impl> getEvent() const { return MEvent; }
+  const QueueImplPtr &getQueue() const { return MQueue; }
+
+  const EventImplPtr &getEvent() const { return MEvent; }
 
   // Methods needed to support SYCL instrumentation
 
@@ -143,7 +151,7 @@ public:
   void resolveReleaseDependencies(std::set<Command *> &list);
   /// Creates an edge event when the dependency is a command.
   void emitEdgeEventForCommandDependence(Command *Cmd, void *ObjAddr,
-                                         const string_class &Prefix,
+                                         const std::string &Prefix,
                                          bool IsCommand);
   /// Creates an edge event when the dependency is an event.
   void emitEdgeEventForEventDependence(Command *Cmd, RT::PiEvent &EventAddr);
@@ -173,7 +181,16 @@ public:
 
   const char *getBlockReason() const;
 
-  virtual ContextImplPtr getContext() const;
+  /// Get the context of the queue this command will be submitted to. Could
+  /// differ from the context of MQueue for memory copy commands.
+  virtual const ContextImplPtr &getWorkerContext() const;
+
+  /// Get the queue this command will be submitted to. Could differ from MQueue
+  /// for memory copy commands.
+  virtual const QueueImplPtr &getWorkerQueue() const;
+
+  /// Returns true iff the command produces a PI event on non-host devices.
+  virtual bool producesPiEvent() const;
 
 protected:
   EventImplPtr MEvent;
@@ -192,13 +209,15 @@ protected:
   /// Perform glueing of events from different contexts
   /// \param DepEvent event this commands should depend on
   /// \param Dep optional DepDesc to perform connection of events properly
+  /// \return returns an optional connection command to enqueue
   ///
   /// Glueing (i.e. connecting) will be performed if and only if DepEvent is
   /// not from host context and its context doesn't match to context of this
-  /// command. Context of this command is fetched via getContext().
+  /// command. Context of this command is fetched via getWorkerContext().
   ///
   /// Optionality of Dep is set by Dep.MDepCommand not equal to nullptr.
-  void processDepEvent(EventImplPtr DepEvent, const DepDesc &Dep);
+  [[nodiscard]] Command *processDepEvent(EventImplPtr DepEvent,
+                                         const DepDesc &Dep);
 
   /// Private interface. Derived classes should implement this method.
   virtual cl_int enqueueImp() = 0;
@@ -211,6 +230,10 @@ protected:
   friend class DispatchHostTask;
 
 public:
+  const std::vector<EventImplPtr> &getPreparedHostDepsEvents() const {
+    return MPreparedHostDepsEvents;
+  }
+
   /// Contains list of dependencies(edges)
   std::vector<DepDesc> MDeps;
   /// Contains list of commands that depend on the command.
@@ -248,15 +271,15 @@ public:
   ///
   /// Stream ids are positive integers and we set it to an invalid value.
   int32_t MStreamID = -1;
-  /// Reserved for storing the object address such as SPIRV or memory object
+  /// Reserved for storing the object address such as SPIR-V or memory object
   /// address.
   void *MAddress = nullptr;
   /// Buffer to build the address string.
-  string_class MAddressString;
+  std::string MAddressString;
   /// Buffer to build the command node type.
-  string_class MCommandNodeType;
+  std::string MCommandNodeType;
   /// Buffer to build the command end-user understandable name.
-  string_class MCommandName;
+  std::string MCommandName;
   /// Flag to indicate if makeTraceEventProlog() has been run.
   bool MTraceEventPrologComplete = false;
   /// Flag to indicate if this is the first time we are seeing this payload.
@@ -279,15 +302,17 @@ class EmptyCommand : public Command {
 public:
   EmptyCommand(QueueImplPtr Queue);
 
-  void printDot(std::ostream &Stream) const final override;
-  const Requirement *getRequirement() const final override { return &MRequirements[0]; }
+  void printDot(std::ostream &Stream) const final;
+  const Requirement *getRequirement() const final { return &MRequirements[0]; }
   void addRequirement(Command *DepCmd, AllocaCommandBase *AllocaCmd,
                       const Requirement *Req);
 
   void emitInstrumentationData() override;
 
+  bool producesPiEvent() const final;
+
 private:
-  cl_int enqueueImp() final override;
+  cl_int enqueueImp() final;
 
   // Employing deque here as it allows to push_back/emplace_back without
   // invalidation of pointer or reference to stored data item regardless of
@@ -301,11 +326,12 @@ class ReleaseCommand : public Command {
 public:
   ReleaseCommand(QueueImplPtr Queue, AllocaCommandBase *AllocaCmd);
 
-  void printDot(std::ostream &Stream) const final override;
+  void printDot(std::ostream &Stream) const final;
   void emitInstrumentationData() override;
+  bool producesPiEvent() const final;
 
 private:
-  cl_int enqueueImp() final override;
+  cl_int enqueueImp() final;
 
   /// Command which allocates memory release command should dealocate.
   AllocaCommandBase *MAllocaCmd = nullptr;
@@ -323,18 +349,13 @@ public:
 
   virtual void *getMemAllocation() const = 0;
 
-  const Requirement *getRequirement() const final override { return &MRequirement; }
+  const Requirement *getRequirement() const final { return &MRequirement; }
 
   void emitInstrumentationData() override;
 
-  void *MMemAllocation = nullptr;
+  bool producesPiEvent() const final;
 
-  // ESIMD-extension-specific fields.
-  struct {
-    // If this alloca corresponds to an ESIMD accessor, then this field holds
-    // an image buffer wrapping the memory allocation above.
-    void *MWrapperImage = nullptr;
-  } ESIMDExt;
+  void *MMemAllocation = nullptr;
 
   /// Alloca command linked with current command.
   /// Device and host alloca commands can be linked, so they may share the same
@@ -362,12 +383,12 @@ public:
                 bool InitFromUserData = true,
                 AllocaCommandBase *LinkedAllocaCmd = nullptr);
 
-  void *getMemAllocation() const final override { return MMemAllocation; }
-  void printDot(std::ostream &Stream) const final override;
+  void *getMemAllocation() const final { return MMemAllocation; }
+  void printDot(std::ostream &Stream) const final;
   void emitInstrumentationData() override;
 
 private:
-  cl_int enqueueImp() final override;
+  cl_int enqueueImp() final;
 
   /// The flag indicates that alloca should try to reuse pointer provided by
   /// the user during memory object construction.
@@ -378,15 +399,16 @@ private:
 class AllocaSubBufCommand : public AllocaCommandBase {
 public:
   AllocaSubBufCommand(QueueImplPtr Queue, Requirement Req,
-                      AllocaCommandBase *ParentAlloca);
+                      AllocaCommandBase *ParentAlloca,
+                      std::vector<Command *> &ToEnqueue);
 
-  void *getMemAllocation() const final override;
-  void printDot(std::ostream &Stream) const final override;
+  void *getMemAllocation() const final;
+  void printDot(std::ostream &Stream) const final;
   AllocaCommandBase *getParentAlloca() { return MParentAlloca; }
   void emitInstrumentationData() override;
 
 private:
-  cl_int enqueueImp() final override;
+  cl_int enqueueImp() final;
 
   AllocaCommandBase *MParentAlloca = nullptr;
 };
@@ -397,12 +419,12 @@ public:
   MapMemObject(AllocaCommandBase *SrcAllocaCmd, Requirement Req, void **DstPtr,
                QueueImplPtr Queue, access::mode MapMode);
 
-  void printDot(std::ostream &Stream) const final override;
-  const Requirement *getRequirement() const final override { return &MSrcReq; }
+  void printDot(std::ostream &Stream) const final;
+  const Requirement *getRequirement() const final { return &MSrcReq; }
   void emitInstrumentationData() override;
 
 private:
-  cl_int enqueueImp() final override;
+  cl_int enqueueImp() final;
 
   AllocaCommandBase *MSrcAllocaCmd = nullptr;
   Requirement MSrcReq;
@@ -416,12 +438,13 @@ public:
   UnMapMemObject(AllocaCommandBase *DstAllocaCmd, Requirement Req,
                  void **SrcPtr, QueueImplPtr Queue);
 
-  void printDot(std::ostream &Stream) const final override;
-  const Requirement *getRequirement() const final override { return &MDstReq; }
+  void printDot(std::ostream &Stream) const final;
+  const Requirement *getRequirement() const final { return &MDstReq; }
   void emitInstrumentationData() override;
+  bool producesPiEvent() const final;
 
 private:
-  cl_int enqueueImp() final override;
+  cl_int enqueueImp() final;
 
   AllocaCommandBase *MDstAllocaCmd = nullptr;
   Requirement MDstReq;
@@ -436,13 +459,15 @@ public:
                 Requirement DstReq, AllocaCommandBase *DstAllocaCmd,
                 QueueImplPtr SrcQueue, QueueImplPtr DstQueue);
 
-  void printDot(std::ostream &Stream) const final override;
-  const Requirement *getRequirement() const final override { return &MDstReq; }
-  void emitInstrumentationData() final override;
-  ContextImplPtr getContext() const final override;
+  void printDot(std::ostream &Stream) const final;
+  const Requirement *getRequirement() const final { return &MDstReq; }
+  void emitInstrumentationData() final;
+  const ContextImplPtr &getWorkerContext() const final;
+  const QueueImplPtr &getWorkerQueue() const final;
+  bool producesPiEvent() const final;
 
 private:
-  cl_int enqueueImp() final override;
+  cl_int enqueueImp() final;
 
   QueueImplPtr MSrcQueue;
   Requirement MSrcReq;
@@ -459,13 +484,14 @@ public:
                     Requirement DstReq, void **DstPtr, QueueImplPtr SrcQueue,
                     QueueImplPtr DstQueue);
 
-  void printDot(std::ostream &Stream) const final override;
-  const Requirement *getRequirement() const final override { return &MDstReq; }
-  void emitInstrumentationData() final override;
-  ContextImplPtr getContext() const final override;
+  void printDot(std::ostream &Stream) const final;
+  const Requirement *getRequirement() const final { return &MDstReq; }
+  void emitInstrumentationData() final;
+  const ContextImplPtr &getWorkerContext() const final;
+  const QueueImplPtr &getWorkerQueue() const final;
 
 private:
-  cl_int enqueueImp() final override;
+  cl_int enqueueImp() final;
 
   QueueImplPtr MSrcQueue;
   Requirement MSrcReq;
@@ -480,32 +506,46 @@ class ExecCGCommand : public Command {
 public:
   ExecCGCommand(std::unique_ptr<detail::CG> CommandGroup, QueueImplPtr Queue);
 
-  void flushStreams();
+  std::vector<StreamImplPtr> getStreams() const;
 
-  void printDot(std::ostream &Stream) const final override;
-  void emitInstrumentationData() final override;
+  void clearStreams();
+
+  void printDot(std::ostream &Stream) const final;
+  void emitInstrumentationData() final;
 
   detail::CG &getCG() const { return *MCommandGroup; }
 
-  // MEmptyCmd one is only employed if this command refers to host-task.
-  // MEmptyCmd due to unreliable mechanism of lookup for single EmptyCommand
-  // amongst users of host-task-representing command. This unreliability roots
-  // in cleanup process.
+  // MEmptyCmd is only employed if this command refers to host-task.
+  // The mechanism of lookup for single EmptyCommand amongst users of
+  // host-task-representing command is unreliable. This unreliability roots in
+  // the cleanup process.
   EmptyCommand *MEmptyCmd = nullptr;
 
+  // This function is only usable for native kernel to prevent access to free'd
+  // memory in DispatchNativeKernel.
+  // TODO remove when native kernel support is terminated.
+  void releaseCG() {
+    MCommandGroup.release();
+  }
+
+  bool producesPiEvent() const final;
+
 private:
-  cl_int enqueueImp() final override;
+  cl_int enqueueImp() final;
 
   AllocaCommandBase *getAllocaForReq(Requirement *Req);
 
-  pi_result SetKernelParamsAndLaunch(CGExecKernel *ExecKernel,
-                                     RT::PiKernel Kernel, NDRDescT &NDRDesc,
-                                     std::vector<RT::PiEvent> &RawEvents,
-                                     RT::PiEvent &Event);
+  pi_result SetKernelParamsAndLaunch(
+      CGExecKernel *ExecKernel,
+      std::shared_ptr<device_image_impl> DeviceImageImpl, RT::PiKernel Kernel,
+      NDRDescT &NDRDesc, std::vector<RT::PiEvent> &RawEvents,
+      RT::PiEvent &Event,
+      const ProgramManager::KernelArgMask &EliminatedArgMask);
 
   std::unique_ptr<detail::CG> MCommandGroup;
 
   friend class Command;
+  friend class Scheduler;
 };
 
 class UpdateHostRequirementCommand : public Command {
@@ -513,12 +553,12 @@ public:
   UpdateHostRequirementCommand(QueueImplPtr Queue, Requirement Req,
                                AllocaCommandBase *SrcAllocaCmd, void **DstPtr);
 
-  void printDot(std::ostream &Stream) const final override;
-  const Requirement *getRequirement() const final override { return &MDstReq; }
-  void emitInstrumentationData() final override;
+  void printDot(std::ostream &Stream) const final;
+  const Requirement *getRequirement() const final { return &MDstReq; }
+  void emitInstrumentationData() final;
 
 private:
-  cl_int enqueueImp() final override;
+  cl_int enqueueImp() final;
 
   AllocaCommandBase *MSrcAllocaCmd = nullptr;
   Requirement MDstReq;

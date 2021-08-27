@@ -1,3 +1,4 @@
 add_sycl_unittest(QueueTests OBJECT
-  wait.cpp
+  EventClear.cpp
+  Wait.cpp
 )

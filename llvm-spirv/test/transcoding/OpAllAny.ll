@@ -2,11 +2,20 @@
 ; RUN: llvm-spirv %t.bc -spirv-text -o %t.txt
 ; RUN: FileCheck < %t.txt %s --check-prefix=CHECK-SPIRV
 ; RUN: llvm-spirv %t.bc -o %t.spv
+; RUN: spirv-val %t.spv
 ; RUN: llvm-spirv -r %t.spv -o %t.rev.bc
 ; RUN: llvm-dis < %t.rev.bc | FileCheck %s --check-prefix=CHECK-LLVM
+; RUN: llvm-spirv -r %t.spv -o %t.rev.bc --spirv-target-env=SPV-IR
+; RUN: llvm-dis < %t.rev.bc | FileCheck %s --check-prefix=CHECK-SPV-LLVM
 
 ; CHECK-LLVM: call spir_func i32 @_Z3allDv2_i(
 ; CHECK-LLVM: call spir_func i32 @_Z3anyDv2_i(
+
+; CHECK-SPV-LLVM: call spir_func i32 @_Z11__spirv_AllDv2_i(
+; CHECK-SPV-LLVM: call spir_func i32 @_Z11__spirv_AnyDv2_i(
+
+; CHECK-SPV-LLVM: declare spir_func i32 @_Z11__spirv_AllDv2_i(<2 x i32>)
+; CHECK-SPV-LLVM: declare spir_func i32 @_Z11__spirv_AnyDv2_i(<2 x i32>)
 
 ; CHECK-SPIRV: 2 TypeBool [[BoolTypeID:[0-9]+]]
 ; CHECK-SPIRV: 4 All [[BoolTypeID]]

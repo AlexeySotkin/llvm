@@ -156,7 +156,7 @@ void WriteMemoryProfile(char *buf, uptr buf_size, uptr nthread, uptr nlive) {
   RegionMemUsage(HeapMemBeg(), HeapMemEnd(), &heap_res, &heap_dirty);
 #else  // !SANITIZER_GO
   uptr app_res, app_dirty;
-  RegionMemUsage(AppMemBeg(), AppMemEnd(), &app_res, &app_dirty);
+  RegionMemUsage(LoAppMemBeg(), LoAppMemEnd(), &app_res, &app_dirty);
 #endif
 
   StackDepotStats *stacks = StackDepotGetStats();
@@ -169,7 +169,7 @@ void WriteMemoryProfile(char *buf, uptr buf_size, uptr nthread, uptr nlive) {
     "high app (0x%016zx-0x%016zx): resident %zd kB, dirty %zd kB\n"
     "heap     (0x%016zx-0x%016zx): resident %zd kB, dirty %zd kB\n"
 #else  // !SANITIZER_GO
-    "app      (0x%016zx-0x%016zx): resident %zd kB, dirty %zd kB\n"
+      "app      (0x%016zx-0x%016zx): resident %zd kB, dirty %zd kB\n"
 #endif
     "stacks: %zd unique IDs, %zd kB allocated\n"
     "threads: %zd total, %zd live\n"
@@ -182,7 +182,7 @@ void WriteMemoryProfile(char *buf, uptr buf_size, uptr nthread, uptr nlive) {
     HiAppMemBeg(), HiAppMemEnd(), high_res / 1024, high_dirty / 1024,
     HeapMemBeg(), HeapMemEnd(), heap_res / 1024, heap_dirty / 1024,
 #else  // !SANITIZER_GO
-    AppMemBeg(), AppMemEnd(), app_res / 1024, app_dirty / 1024,
+      LoAppMemBeg(), LoAppMemEnd(), app_res / 1024, app_dirty / 1024,
 #endif
     stacks->n_uniq_ids, stacks->allocated / 1024,
     nthread, nlive);
@@ -215,8 +215,8 @@ static void my_pthread_introspection_hook(unsigned int event, pthread_t thread,
       Processor *proc = ProcCreate();
       ProcWire(proc, thr);
       ThreadState *parent_thread_state = nullptr;  // No parent.
-      int tid = ThreadCreate(parent_thread_state, 0, (uptr)thread, true);
-      CHECK_NE(tid, 0);
+      Tid tid = ThreadCreate(parent_thread_state, 0, (uptr)thread, true);
+      CHECK_NE(tid, kMainTid);
       ThreadStart(thr, tid, GetTid(), ThreadType::Worker);
     }
   } else if (event == PTHREAD_INTROSPECTION_THREAD_TERMINATE) {
@@ -234,11 +234,11 @@ static void my_pthread_introspection_hook(unsigned int event, pthread_t thread,
 #endif
 
 void InitializePlatformEarly() {
-#if defined(__aarch64__)
+#  if !SANITIZER_GO && SANITIZER_IOS
   uptr max_vm = GetMaxUserVirtualAddress() + 1;
-  if (max_vm != Mapping::kHiAppMemEnd) {
+  if (max_vm != HiAppMemEnd()) {
     Printf("ThreadSanitizer: unsupported vm address limit %p, expected %p.\n",
-           max_vm, Mapping::kHiAppMemEnd);
+           max_vm, HiAppMemEnd());
     Die();
   }
 #endif
@@ -306,14 +306,13 @@ void ImitateTlsWrite(ThreadState *thr, uptr tls_addr, uptr tls_size) {
 #if !SANITIZER_GO
 // Note: this function runs with async signals enabled,
 // so it must not touch any tsan state.
-int call_pthread_cancel_with_cleanup(int(*fn)(void *c, void *m,
-    void *abstime), void *c, void *m, void *abstime,
-    void(*cleanup)(void *arg), void *arg) {
+int call_pthread_cancel_with_cleanup(int (*fn)(void *arg),
+                                     void (*cleanup)(void *arg), void *arg) {
   // pthread_cleanup_push/pop are hardcore macros mess.
   // We can't intercept nor call them w/o including pthread.h.
   int res;
   pthread_cleanup_push(cleanup, arg);
-  res = fn(c, m, abstime);
+  res = fn(arg);
   pthread_cleanup_pop(0);
   return res;
 }

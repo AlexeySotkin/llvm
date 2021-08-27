@@ -44,8 +44,10 @@ using namespace llvm;
 
 std::string X86_MC::ParseX86Triple(const Triple &TT) {
   std::string FS;
-  if (TT.getArch() == Triple::x86_64)
-    FS = "+64bit-mode,-32bit-mode,-16bit-mode";
+  // SSE2 should default to enabled in 64-bit mode, but can be turned off
+  // explicitly.
+  if (TT.isArch64Bit())
+    FS = "+64bit-mode,-32bit-mode,-16bit-mode,+sse2";
   else if (TT.getEnvironment() != Triple::CODE16)
     FS = "-64bit-mode,+32bit-mode,-16bit-mode";
   else
@@ -293,7 +295,7 @@ MCSubtargetInfo *X86_MC::createX86MCSubtargetInfo(const Triple &TT,
   if (CPU.empty())
     CPU = "generic";
 
-  return createX86MCSubtargetInfoImpl(TT, CPU, ArchFS);
+  return createX86MCSubtargetInfoImpl(TT, CPU, /*TuneCPU*/ CPU, ArchFS);
 }
 
 static MCInstrInfo *createX86MCInstrInfo() {
@@ -330,7 +332,7 @@ static MCAsmInfo *createX86MCAsmInfo(const MCRegisterInfo &MRI,
     MAI = new X86ELFMCAsmInfo(TheTriple);
   } else if (TheTriple.isWindowsMSVCEnvironment() ||
              TheTriple.isWindowsCoreCLREnvironment()) {
-    if (Options.getAssemblyLanguage().equals_lower("masm"))
+    if (Options.getAssemblyLanguage().equals_insensitive("masm"))
       MAI = new X86MCAsmInfoMicrosoftMASM(TheTriple);
     else
       MAI = new X86MCAsmInfoMicrosoft(TheTriple);
@@ -403,6 +405,7 @@ public:
   bool evaluateBranch(const MCInst &Inst, uint64_t Addr, uint64_t Size,
                       uint64_t &Target) const override;
   Optional<uint64_t> evaluateMemoryOperandAddress(const MCInst &Inst,
+                                                  const MCSubtargetInfo *STI,
                                                   uint64_t Addr,
                                                   uint64_t Size) const override;
 };
@@ -530,7 +533,8 @@ bool X86MCInstrAnalysis::evaluateBranch(const MCInst &Inst, uint64_t Addr,
 }
 
 Optional<uint64_t> X86MCInstrAnalysis::evaluateMemoryOperandAddress(
-    const MCInst &Inst, uint64_t Addr, uint64_t Size) const {
+    const MCInst &Inst, const MCSubtargetInfo *STI, uint64_t Addr,
+    uint64_t Size) const {
   const MCInstrDesc &MCID = Info->get(Inst.getOpcode());
   int MemOpStart = X86II::getMemoryOperandNo(MCID.TSFlags);
   if (MemOpStart == -1)

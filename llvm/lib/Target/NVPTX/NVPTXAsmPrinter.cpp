@@ -1272,9 +1272,6 @@ void NVPTXAsmPrinter::emitPTXAddressSpace(unsigned int AddressSpace,
 std::string
 NVPTXAsmPrinter::getPTXFundamentalTypeStr(Type *Ty, bool useB4PTR) const {
   switch (Ty->getTypeID()) {
-  default:
-    llvm_unreachable("unexpected type");
-    break;
   case Type::IntegerTyID: {
     unsigned NumBits = cast<IntegerType>(Ty)->getBitWidth();
     if (NumBits == 1)
@@ -1305,9 +1302,10 @@ NVPTXAsmPrinter::getPTXFundamentalTypeStr(Type *Ty, bool useB4PTR) const {
       return "b32";
     else
       return "u32";
+  default:
+    break;
   }
   llvm_unreachable("unexpected type");
-  return nullptr;
 }
 
 void NVPTXAsmPrinter::emitPTXGlobalVariable(const GlobalVariable *GVar,
@@ -1459,7 +1457,7 @@ void NVPTXAsmPrinter::emitFunctionParamList(const Function *F, raw_ostream &O) {
       }
     }
 
-    if (!PAL.hasParamAttribute(paramIndex, Attribute::ByVal)) {
+    if (!PAL.hasParamAttr(paramIndex, Attribute::ByVal)) {
       if (Ty->isAggregateType() || Ty->isVectorTy() || Ty->isIntegerTy(128)) {
         // Just print .param .align <a> .b8 .param[size];
         // <a> = PAL.getparamalignment

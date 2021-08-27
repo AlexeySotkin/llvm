@@ -793,7 +793,7 @@ define i64 @fct18(i32 %xor72) nounwind ssp {
 }
 
 ; Using the access to the global array to keep the instruction and control flow.
-@first_ones = external global [65536 x i8]
+@first_ones = external dso_local global [65536 x i8]
 
 ; Function Attrs: nounwind readonly ssp
 define i32 @fct19(i64 %arg1) nounwind readonly ssp  {
@@ -813,7 +813,7 @@ define i32 @fct19(i64 %arg1) nounwind readonly ssp  {
 ; LLC-NEXT:    adrp x9, first_ones
 ; LLC-NEXT:    add x9, x9, :lo12:first_ones
 ; LLC-NEXT:    ldrb w8, [x9, x8]
-; LLC-NEXT:    add w0, w8, #16 // =16
+; LLC-NEXT:    add w0, w8, #16
 ; LLC-NEXT:    ret
 ; LLC-NEXT:  .LBB26_4: // %if.end13
 ; LLC-NEXT:    ubfx x8, x0, #16, #16
@@ -822,7 +822,7 @@ define i32 @fct19(i64 %arg1) nounwind readonly ssp  {
 ; LLC-NEXT:    adrp x9, first_ones
 ; LLC-NEXT:    add x9, x9, :lo12:first_ones
 ; LLC-NEXT:    ldrb w8, [x9, x8]
-; LLC-NEXT:    add w0, w8, #32 // =32
+; LLC-NEXT:    add w0, w8, #32
 ; LLC-NEXT:    ret
 ; LLC-NEXT:  .LBB26_6:
 ; LLC-NEXT:    mov w0, #64
@@ -932,7 +932,7 @@ define i80 @fct20(i128 %a, i128 %b) {
 ; LLC-NEXT:    movk x12, #45, lsl #48
 ; LLC-NEXT:    and x11, x9, x11
 ; LLC-NEXT:    and x12, x8, x12
-; LLC-NEXT:    cmp x10, #0 // =0
+; LLC-NEXT:    cmp x10, #0
 ; LLC-NEXT:    csel x0, x12, x8, eq
 ; LLC-NEXT:    csel x1, x11, x9, eq
 ; LLC-NEXT:    ret
@@ -965,7 +965,7 @@ end:
 }
 
 ; Check if we can still catch UBFX when "AND" is used by SHL.
-@arr = external global [8 x [64 x i64]]
+@arr = external dso_local global [8 x [64 x i64]]
 define i64 @fct21(i64 %x) {
 ; LLC-LABEL: fct21:
 ; LLC:       // %bb.0: // %entry

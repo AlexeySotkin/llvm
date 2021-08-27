@@ -70,6 +70,8 @@ class CXXPseudoDestructorExpr;
 class OverloadExpr;
 class DependentScopeDeclRefExpr;
 class CXXConstructExpr;
+class CXXDefaultInitExpr;
+class CXXDefaultArgExpr;
 class LambdaExpr;
 class CXXUnresolvedConstructExpr;
 class CXXDependentScopeMemberExpr;
@@ -77,6 +79,8 @@ class MaterializeTemporaryExpr;
 class CXXFoldExpr;
 class TypeTraitExpr;
 class ConceptSpecializationExpr;
+class SYCLUniqueStableIdExpr;
+class SYCLUniqueStableNameExpr;
 class PredefinedExpr;
 class CallExpr;
 class OffsetOfExpr;
@@ -100,13 +104,17 @@ class ObjCSubscriptRefExpr;
 class ObjCIsaExpr;
 class ObjCIndirectCopyRestoreExpr;
 class ObjCMessageExpr;
+class SYCLBuiltinNumFieldsExpr;
+class SYCLBuiltinNumBasesExpr;
+class SYCLBuiltinFieldTypeExpr;
+class SYCLBuiltinBaseTypeExpr;
 
 // The following functions are called from constructors of `Expr`, so they
 // should not access anything beyond basic
 ExprDependence computeDependence(FullExpr *E);
 ExprDependence computeDependence(OpaqueValueExpr *E);
 ExprDependence computeDependence(ParenExpr *E);
-ExprDependence computeDependence(UnaryOperator *E);
+ExprDependence computeDependence(UnaryOperator *E, const ASTContext &Ctx);
 ExprDependence computeDependence(UnaryExprOrTypeTraitExpr *E);
 ExprDependence computeDependence(ArraySubscriptExpr *E);
 ExprDependence computeDependence(MatrixSubscriptExpr *E);
@@ -153,6 +161,8 @@ ExprDependence computeDependence(OverloadExpr *E, bool KnownDependent,
                                  bool KnownContainsUnexpandedParameterPack);
 ExprDependence computeDependence(DependentScopeDeclRefExpr *E);
 ExprDependence computeDependence(CXXConstructExpr *E);
+ExprDependence computeDependence(CXXDefaultInitExpr *E);
+ExprDependence computeDependence(CXXDefaultArgExpr *E);
 ExprDependence computeDependence(LambdaExpr *E,
                                  bool ContainsUnexpandedParameterPack);
 ExprDependence computeDependence(CXXUnresolvedConstructExpr *E);
@@ -163,6 +173,8 @@ ExprDependence computeDependence(TypeTraitExpr *E);
 ExprDependence computeDependence(ConceptSpecializationExpr *E,
                                  bool ValueDependent);
 
+ExprDependence computeDependence(SYCLUniqueStableNameExpr *E);
+ExprDependence computeDependence(SYCLUniqueStableIdExpr *E);
 ExprDependence computeDependence(PredefinedExpr *E);
 ExprDependence computeDependence(CallExpr *E, llvm::ArrayRef<Expr *> PreArgs);
 ExprDependence computeDependence(OffsetOfExpr *E);
@@ -189,6 +201,11 @@ ExprDependence computeDependence(ObjCSubscriptRefExpr *E);
 ExprDependence computeDependence(ObjCIsaExpr *E);
 ExprDependence computeDependence(ObjCIndirectCopyRestoreExpr *E);
 ExprDependence computeDependence(ObjCMessageExpr *E);
+
+ExprDependence computeDependence(SYCLBuiltinNumFieldsExpr *E);
+ExprDependence computeDependence(SYCLBuiltinNumBasesExpr *E);
+ExprDependence computeDependence(SYCLBuiltinFieldTypeExpr *E);
+ExprDependence computeDependence(SYCLBuiltinBaseTypeExpr *E);
 
 } // namespace clang
 #endif

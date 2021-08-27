@@ -13,16 +13,20 @@
 #ifndef MLIR_DIALECT_SCF_PASSES_H_
 #define MLIR_DIALECT_SCF_PASSES_H_
 
-#include "llvm/ADT/ArrayRef.h"
-#include <memory>
+#include "mlir/Pass/Pass.h"
 
 namespace mlir {
 
-class Pass;
+/// Creates a pass that bufferizes the SCF dialect.
+std::unique_ptr<Pass> createSCFBufferizePass();
 
 /// Creates a pass that specializes for loop for unrolling and
 /// vectorization.
 std::unique_ptr<Pass> createForLoopSpecializationPass();
+
+/// Creates a pass that peels for loops at their upper bounds for
+/// better vectorization.
+std::unique_ptr<Pass> createForLoopPeelingPass();
 
 /// Creates a loop fusion pass which fuses parallel loops.
 std::unique_ptr<Pass> createParallelLoopFusionPass();
@@ -34,6 +38,18 @@ std::unique_ptr<Pass> createParallelLoopSpecializationPass();
 /// Creates a pass which tiles innermost parallel loops.
 std::unique_ptr<Pass>
 createParallelLoopTilingPass(llvm::ArrayRef<int64_t> tileSize = {});
+
+/// Creates a pass which folds arith ops on induction variable into
+/// loop range.
+std::unique_ptr<Pass> createForLoopRangeFoldingPass();
+
+//===----------------------------------------------------------------------===//
+// Registration
+//===----------------------------------------------------------------------===//
+
+/// Generate the code for registering passes.
+#define GEN_PASS_REGISTRATION
+#include "mlir/Dialect/SCF/Passes.h.inc"
 
 } // namespace mlir
 

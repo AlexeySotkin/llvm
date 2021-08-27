@@ -530,6 +530,15 @@ SDValue LanaiTargetLowering::LowerCCCArguments(
   return Chain;
 }
 
+bool LanaiTargetLowering::CanLowerReturn(
+    CallingConv::ID CallConv, MachineFunction &MF, bool IsVarArg,
+    const SmallVectorImpl<ISD::OutputArg> &Outs, LLVMContext &Context) const {
+  SmallVector<CCValAssign, 16> RVLocs;
+  CCState CCInfo(CallConv, IsVarArg, MF, RVLocs, Context);
+
+  return CCInfo.CheckReturn(Outs, RetCC_Lanai32);
+}
+
 SDValue
 LanaiTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
                                  bool IsVarArg,
@@ -1020,7 +1029,7 @@ SDValue LanaiTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
   SDValue Size = Op.getOperand(1);
   SDLoc DL(Op);
 
-  unsigned SPReg = getStackPointerRegisterToSaveRestore();
+  Register SPReg = getStackPointerRegisterToSaveRestore();
 
   // Get a reference to the stack pointer.
   SDValue StackPointer = DAG.getCopyFromReg(Chain, DL, SPReg, MVT::i32);
@@ -1500,8 +1509,7 @@ void LanaiTargetLowering::computeKnownBitsForTargetNode(
     KnownBits Known2;
     Known = DAG.computeKnownBits(Op->getOperand(0), Depth + 1);
     Known2 = DAG.computeKnownBits(Op->getOperand(1), Depth + 1);
-    Known.Zero &= Known2.Zero;
-    Known.One &= Known2.One;
+    Known = KnownBits::commonBits(Known, Known2);
     break;
   }
 }

@@ -168,7 +168,7 @@ static void DefineTypeSize(const Twine &MacroName, unsigned TypeWidth,
                            MacroBuilder &Builder) {
   llvm::APInt MaxVal = isSigned ? llvm::APInt::getSignedMaxValue(TypeWidth)
                                 : llvm::APInt::getMaxValue(TypeWidth);
-  Builder.defineMacro(MacroName, MaxVal.toString(10, isSigned) + ValSuffix);
+  Builder.defineMacro(MacroName, toString(MaxVal, 10, isSigned) + ValSuffix);
 }
 
 /// DefineTypeSize - An overloaded helper that uses TargetInfo to determine
@@ -215,6 +215,11 @@ static void DefineExactWidthIntType(TargetInfo::IntType Ty,
   // ends up being defined in terms of the correct type.
   if (TypeWidth == 64)
     Ty = IsSigned ? TI.getInt64Type() : TI.getUInt64Type();
+
+  // Use the target specified int16 type when appropriate. Some MCU targets
+  // (such as AVR) have definition of [u]int16_t to [un]signed int.
+  if (TypeWidth == 16)
+    Ty = IsSigned ? TI.getInt16Type() : TI.getUInt16Type();
 
   const char *Prefix = IsSigned ? "__INT" : "__UINT";
 
@@ -376,8 +381,11 @@ static void InitializeStandardPredefinedMacros(const TargetInfo &TI,
       Builder.defineMacro("__STDC_VERSION__", "199409L");
   } else {
     //   -- __cplusplus
+    // FIXME: Use correct value for C++23.
+    if (LangOpts.CPlusPlus2b)
+      Builder.defineMacro("__cplusplus", "202101L");
     //      [C++20] The integer literal 202002L.
-    if (LangOpts.CPlusPlus20)
+    else if (LangOpts.CPlusPlus20)
       Builder.defineMacro("__cplusplus", "202002L");
     //      [C++17] The integer literal 201703L.
     else if (LangOpts.CPlusPlus17)
@@ -403,6 +411,12 @@ static void InitializeStandardPredefinedMacros(const TargetInfo &TI,
     Builder.defineMacro("__STDCPP_DEFAULT_NEW_ALIGNMENT__",
                         Twine(TI.getNewAlign() / TI.getCharWidth()) +
                             TI.getTypeConstantSuffix(TI.getSizeType()));
+
+    //   -- __STDCPP_­THREADS__
+    //      Defined, and has the value integer literal 1, if and only if a
+    //      program can have more than one thread of execution.
+    if (LangOpts.getThreadModel() == LangOptions::ThreadModelKind::POSIX)
+      Builder.defineMacro("__STDCPP_THREADS__", "1");
   }
 
   // In C11 these are environment macros. In C++11 they are only defined
@@ -445,6 +459,9 @@ static void InitializeStandardPredefinedMacros(const TargetInfo &TI,
       case 200:
         Builder.defineMacro("__OPENCL_C_VERSION__", "200");
         break;
+      case 300:
+        Builder.defineMacro("__OPENCL_C_VERSION__", "300");
+        break;
       default:
         llvm_unreachable("Unsupported OpenCL version");
       }
@@ -453,6 +470,7 @@ static void InitializeStandardPredefinedMacros(const TargetInfo &TI,
     Builder.defineMacro("CL_VERSION_1_1", "110");
     Builder.defineMacro("CL_VERSION_1_2", "120");
     Builder.defineMacro("CL_VERSION_2_0", "200");
+    Builder.defineMacro("CL_VERSION_3_0", "300");
 
     if (TI.isLittleEndian())
       Builder.defineMacro("__ENDIAN_LITTLE__");
@@ -461,10 +479,22 @@ static void InitializeStandardPredefinedMacros(const TargetInfo &TI,
       Builder.defineMacro("__FAST_RELAXED_MATH__");
   }
 
-  if (LangOpts.SYCL) {
+  if (LangOpts.SYCLIsDevice || LangOpts.SYCLIsHost) {
     // SYCL Version is set to a value when building SYCL applications
-    if (LangOpts.SYCLVersion == 2017)
+    if (LangOpts.getSYCLVersion() == LangOptions::SYCL_2017) {
       Builder.defineMacro("CL_SYCL_LANGUAGE_VERSION", "121");
+      Builder.defineMacro("SYCL_LANGUAGE_VERSION", "201707");
+    } else if (LangOpts.getSYCLVersion() == LangOptions::SYCL_2020)
+      Builder.defineMacro("SYCL_LANGUAGE_VERSION", "202001");
+
+    if (LangOpts.SYCLValueFitInMaxInt)
+      Builder.defineMacro("__SYCL_ID_QUERIES_FIT_IN_INT__");
+
+    // Set __SYCL_DISABLE_PARALLEL_FOR_RANGE_ROUNDING__ macro for
+    // both host and device compilations if -fsycl-disable-range-rounding
+    // flag is used.
+    if (LangOpts.SYCLDisableRangeRounding)
+      Builder.defineMacro("__SYCL_DISABLE_PARALLEL_FOR_RANGE_ROUNDING__");
   }
 
   if (LangOpts.DeclareSPIRVBuiltins) {
@@ -578,7 +608,12 @@ static void InitializeCPlusPlusFeatureTestMacros(const LangOptions &LangOpts,
     Builder.defineMacro("__cpp_designated_initializers", "201707L");
     Builder.defineMacro("__cpp_impl_three_way_comparison", "201907L");
     //Builder.defineMacro("__cpp_modules", "201907L");
-    //Builder.defineMacro("__cpp_using_enum", "201907L");
+    Builder.defineMacro("__cpp_using_enum", "201907L");
+  }
+  // C++2b features.
+  if (LangOpts.CPlusPlus2b) {
+    Builder.defineMacro("__cpp_implicit_move", "202011L");
+    Builder.defineMacro("__cpp_size_t_suffix", "202011L");
   }
   if (LangOpts.Char8)
     Builder.defineMacro("__cpp_char8_t", "201811L");
@@ -587,6 +622,29 @@ static void InitializeCPlusPlusFeatureTestMacros(const LangOptions &LangOpts,
   // TS features.
   if (LangOpts.Coroutines)
     Builder.defineMacro("__cpp_coroutines", "201703L");
+}
+
+/// InitializeOpenCLFeatureTestMacros - Define OpenCL macros based on target
+/// settings and language version
+void InitializeOpenCLFeatureTestMacros(const TargetInfo &TI,
+                                       const LangOptions &Opts,
+                                       MacroBuilder &Builder) {
+  const llvm::StringMap<bool> &OpenCLFeaturesMap = TI.getSupportedOpenCLOpts();
+  // FIXME: OpenCL options which affect language semantics/syntax
+  // should be moved into LangOptions.
+  auto defineOpenCLExtMacro = [&](llvm::StringRef Name, auto... OptArgs) {
+    // Check if extension is supported by target and is available in this
+    // OpenCL version
+    if (TI.hasFeatureEnabled(OpenCLFeaturesMap, Name) &&
+        OpenCLOptions::isOpenCLOptionAvailableIn(Opts, OptArgs...))
+      Builder.defineMacro(Name);
+  };
+#define OPENCL_GENERIC_EXTENSION(Ext, ...)                                     \
+  defineOpenCLExtMacro(#Ext, __VA_ARGS__);
+#include "clang/Basic/OpenCLExtensions.def"
+
+  // Assume compiling for FULL profile
+  Builder.defineMacro("__opencl_c_int64");
 }
 
 static void InitializePredefinedMacros(const TargetInfo &TI,
@@ -744,12 +802,12 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   if (LangOpts.GNUCVersion && LangOpts.RTTI)
     Builder.defineMacro("__GXX_RTTI");
 
-  if (LangOpts.SjLjExceptions)
+  if (LangOpts.hasSjLjExceptions())
     Builder.defineMacro("__USING_SJLJ_EXCEPTIONS__");
-  else if (LangOpts.SEHExceptions)
+  else if (LangOpts.hasSEHExceptions())
     Builder.defineMacro("__SEH__");
-  else if (LangOpts.DWARFExceptions &&
-          (TI.getTriple().isThumb() || TI.getTriple().isARM()))
+  else if (LangOpts.hasDWARFExceptions() &&
+           (TI.getTriple().isThumb() || TI.getTriple().isARM()))
     Builder.defineMacro("__ARM_DWARF_EH__");
 
   if (LangOpts.Deprecated)
@@ -764,6 +822,21 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
       Builder.defineMacro("_WCHAR_T_DEFINED");
       Builder.defineMacro("_NATIVE_WCHAR_T_DEFINED");
     }
+  }
+
+  // Macros to help identify the narrow and wide character sets
+  // FIXME: clang currently ignores -fexec-charset=. If this changes,
+  // then this may need to be updated.
+  Builder.defineMacro("__clang_literal_encoding__", "\"UTF-8\"");
+  if (TI.getTypeWidth(TI.getWCharType()) >= 32) {
+    // FIXME: 32-bit wchar_t signals UTF-32. This may change
+    // if -fwide-exec-charset= is ever supported.
+    Builder.defineMacro("__clang_wide_literal_encoding__", "\"UTF-32\"");
+  } else {
+    // FIXME: Less-than 32-bit wchar_t generally means UTF-16
+    // (e.g., Windows, 32-bit IBM). This may need to be
+    // updated if -fwide-exec-charset= is ever supported.
+    Builder.defineMacro("__clang_wide_literal_encoding__", "\"UTF-16\"");
   }
 
   if (LangOpts.Optimize)
@@ -958,8 +1031,7 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   DefineFastIntType(64, true, TI, Builder);
   DefineFastIntType(64, false, TI, Builder);
 
-  char UserLabelPrefix[2] = {TI.getDataLayout().getGlobalPrefix(), 0};
-  Builder.defineMacro("__USER_LABEL_PREFIX__", UserLabelPrefix);
+  Builder.defineMacro("__USER_LABEL_PREFIX__", TI.getUserLabelPrefix());
 
   if (LangOpts.FastMath || LangOpts.FiniteMathOnly)
     Builder.defineMacro("__FINITE_MATH_ONLY__", "1");
@@ -1019,7 +1091,8 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   }
 
   // Macros to control C99 numerics and <float.h>
-  Builder.defineMacro("__FLT_EVAL_METHOD__", Twine(TI.getFloatEvalMethod()));
+  // Note: __FLT_EVAL_METHOD__ is not defined here since it is a special
+  // builtin macro, its value may fluctuate during compilation.
   Builder.defineMacro("__FLT_RADIX__", "2");
   Builder.defineMacro("__DECIMAL_DIG__", "__LDBL_DECIMAL_DIG__");
 
@@ -1106,24 +1179,24 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   // Define a macro indicating that the source file is being compiled with a
   // SYCL device compiler which doesn't produce host binary.
   if (LangOpts.SYCLIsDevice) {
-    Builder.defineMacro("__SYCL_DEVICE_ONLY__", "1");
+    Builder.defineMacro("__SYCL_DEVICE_ONLY__");
     Builder.defineMacro("SYCL_EXTERNAL", "__attribute__((sycl_device))");
 
-    if (TI.getTriple().isNVPTX()) {
-        Builder.defineMacro("__SYCL_NVPTX__", "1");
-    }
+    const llvm::Triple &DeviceTriple = TI.getTriple();
+    const llvm::Triple::SubArchType DeviceSubArch = DeviceTriple.getSubArch();
+    if (DeviceTriple.isSPIR() &&
+        DeviceSubArch != llvm::Triple::SPIRSubArch_fpga)
+      Builder.defineMacro("SYCL_USE_NATIVE_FP_ATOMICS");
+    // Enable generation of USM address spaces for FPGA.
+    if (DeviceSubArch == llvm::Triple::SPIRSubArch_fpga)
+      Builder.defineMacro("__ENABLE_USM_ADDR_SPACE__");
   }
-  if (LangOpts.SYCLExplicitSIMD)
-    Builder.defineMacro("__SYCL_EXPLICIT_SIMD__", "1");
   if (LangOpts.SYCLUnnamedLambda)
-    Builder.defineMacro("__SYCL_UNNAMED_LAMBDA__", "1");
+    Builder.defineMacro("__SYCL_UNNAMED_LAMBDA__");
 
   // OpenCL definitions.
   if (LangOpts.OpenCL) {
-#define OPENCLEXT(Ext)                                                         \
-  if (TI.getSupportedOpenCLOpts().isSupported(#Ext, LangOpts))                 \
-    Builder.defineMacro(#Ext);
-#include "clang/Basic/OpenCLExtensions.def"
+    InitializeOpenCLFeatureTestMacros(TI, LangOpts, Builder);
 
     if (TI.getTriple().isSPIR())
       Builder.defineMacro("__IMAGE_SUPPORT__");

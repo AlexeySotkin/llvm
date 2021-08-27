@@ -403,8 +403,9 @@ class InstTemplate<AddrMode am, int sz, IndexMode im,
   bit isUnaryDataProc = 0;
   bit canXformTo16Bit = 0;
   // The instruction is a 16-bit flag setting Thumb instruction. Used
-  // by the parser to determine whether to require the 'S' suffix on the
-  // mnemonic (when not in an IT block) or preclude it (when in an IT block).
+  // by the parser and if-converter to determine whether to require the 'S'
+  // suffix on the mnemonic (when not in an IT block) or preclude it (when
+  // in an IT block).
   bit thumbArithFlagSetting = 0;
 
   bit validForTailPredication = 0;
@@ -1384,8 +1385,8 @@ class ThumbXI<dag oops, dag iops, AddrMode am, int sz,
 }
 
 class T2I<dag oops, dag iops, InstrItinClass itin,
-          string opc, string asm, list<dag> pattern>
-  : Thumb2I<oops, iops, AddrModeNone, 4, itin, opc, asm, "", pattern>;
+          string opc, string asm, list<dag> pattern, AddrMode am = AddrModeNone>
+  : Thumb2I<oops, iops, am, 4, itin, opc, asm, "", pattern>;
 class T2Ii12<dag oops, dag iops, InstrItinClass itin,
              string opc, string asm, list<dag> pattern>
   : Thumb2I<oops, iops, AddrModeT2_i12, 4, itin, opc, asm, "",pattern>;

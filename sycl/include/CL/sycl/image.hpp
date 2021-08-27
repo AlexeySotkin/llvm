@@ -15,43 +15,48 @@
 #include <CL/sycl/stl.hpp>
 #include <CL/sycl/types.hpp>
 #include <cstddef>
+#include <sycl/ext/oneapi/accessor_property_list.hpp>
+
+// sRGB Extension Support
+#define SYCL_EXT_ONEAPI_SRGB 1
 
 __SYCL_INLINE_NAMESPACE(cl) {
 namespace sycl {
 
 enum class image_channel_order : unsigned int {
-  a,
-  r,
-  rx,
-  rg,
-  rgx,
-  ra,
-  rgb,
-  rgbx,
-  rgba,
-  argb,
-  bgra,
-  intensity,
-  luminance,
-  abgr
+  a = 0,
+  r = 1,
+  rx = 2,
+  rg = 3,
+  rgx = 4,
+  ra = 5,
+  rgb = 6,
+  rgbx = 7,
+  rgba = 8,
+  argb = 9,
+  bgra = 10,
+  intensity = 11,
+  luminance = 12,
+  abgr = 13,
+  ext_oneapi_srgba = 14 // OpenCL 2.0
 };
 
 enum class image_channel_type : unsigned int {
-  snorm_int8,
-  snorm_int16,
-  unorm_int8,
-  unorm_int16,
-  unorm_short_565,
-  unorm_short_555,
-  unorm_int_101010,
-  signed_int8,
-  signed_int16,
-  signed_int32,
-  unsigned_int8,
-  unsigned_int16,
-  unsigned_int32,
-  fp16,
-  fp32
+  snorm_int8 = 0,
+  snorm_int16 = 1,
+  unorm_int8 = 2,
+  unorm_int16 = 3,
+  unorm_short_565 = 4,
+  unorm_short_555 = 5,
+  unorm_int_101010 = 6,
+  signed_int8 = 7,
+  signed_int16 = 8,
+  signed_int32 = 9,
+  unsigned_int8 = 10,
+  unsigned_int16 = 11,
+  unsigned_int32 = 12,
+  fp16 = 13,
+  fp32 = 14
 };
 
 using byte = unsigned char;
@@ -92,7 +97,7 @@ public:
   template <bool B = (Dimensions > 1)>
   image(image_channel_order Order, image_channel_type Type,
         const range<Dimensions> &Range,
-        const typename std::enable_if<B, range<Dimensions - 1>>::type &Pitch,
+        const typename detail::enable_if_t<B, range<Dimensions - 1>> &Pitch,
         const property_list &PropList = {}) {
     impl = std::make_shared<detail::image_impl<Dimensions>>(
         Order, Type, Range, Pitch,
@@ -104,7 +109,7 @@ public:
   template <bool B = (Dimensions > 1)>
   image(image_channel_order Order, image_channel_type Type,
         const range<Dimensions> &Range,
-        const typename std::enable_if<B, range<Dimensions - 1>>::type &Pitch,
+        const typename detail::enable_if_t<B, range<Dimensions - 1>> &Pitch,
         AllocatorT Allocator, const property_list &PropList = {}) {
     impl = std::make_shared<detail::image_impl<Dimensions>>(
         Order, Type, Range, Pitch,
@@ -154,7 +159,7 @@ public:
   template <bool B = (Dimensions > 1)>
   image(void *HostPointer, image_channel_order Order, image_channel_type Type,
         const range<Dimensions> &Range,
-        typename std::enable_if<B, range<Dimensions - 1>>::type &Pitch,
+        const typename detail::enable_if_t<B, range<Dimensions - 1>> &Pitch,
         const property_list &PropList = {}) {
     impl = std::make_shared<detail::image_impl<Dimensions>>(
         HostPointer, Order, Type, Range, Pitch,
@@ -166,7 +171,7 @@ public:
   template <bool B = (Dimensions > 1)>
   image(void *HostPointer, image_channel_order Order, image_channel_type Type,
         const range<Dimensions> &Range,
-        typename std::enable_if<B, range<Dimensions - 1>>::type &Pitch,
+        const typename detail::enable_if_t<B, range<Dimensions - 1>> &Pitch,
         AllocatorT Allocator, const property_list &PropList = {}) {
     impl = std::make_shared<detail::image_impl<Dimensions>>(
         HostPointer, Order, Type, Range, Pitch,
@@ -175,7 +180,7 @@ public:
         PropList);
   }
 
-  image(shared_ptr_class<void> &HostPointer, image_channel_order Order,
+  image(std::shared_ptr<void> &HostPointer, image_channel_order Order,
         image_channel_type Type, const range<Dimensions> &Range,
         const property_list &PropList = {}) {
     impl = std::make_shared<detail::image_impl<Dimensions>>(
@@ -184,7 +189,7 @@ public:
         PropList);
   }
 
-  image(shared_ptr_class<void> &HostPointer, image_channel_order Order,
+  image(std::shared_ptr<void> &HostPointer, image_channel_order Order,
         image_channel_type Type, const range<Dimensions> &Range,
         AllocatorT Allocator, const property_list &PropList = {}) {
     impl = std::make_shared<detail::image_impl<Dimensions>>(
@@ -196,9 +201,9 @@ public:
 
   /* Available only when: dimensions >1 */
   template <bool B = (Dimensions > 1)>
-  image(shared_ptr_class<void> &HostPointer, image_channel_order Order,
+  image(std::shared_ptr<void> &HostPointer, image_channel_order Order,
         image_channel_type Type, const range<Dimensions> &Range,
-        const typename std::enable_if<B, range<Dimensions - 1>>::type &Pitch,
+        const typename detail::enable_if_t<B, range<Dimensions - 1>> &Pitch,
         const property_list &PropList = {}) {
     impl = std::make_shared<detail::image_impl<Dimensions>>(
         HostPointer, Order, Type, Range, Pitch,
@@ -208,9 +213,9 @@ public:
 
   /* Available only when: dimensions >1 */
   template <bool B = (Dimensions > 1)>
-  image(shared_ptr_class<void> &HostPointer, image_channel_order Order,
+  image(std::shared_ptr<void> &HostPointer, image_channel_order Order,
         image_channel_type Type, const range<Dimensions> &Range,
-        const typename std::enable_if<B, range<Dimensions - 1>>::type &Pitch,
+        const typename detail::enable_if_t<B, range<Dimensions - 1>> &Pitch,
         AllocatorT Allocator, const property_list &PropList = {}) {
     impl = std::make_shared<detail::image_impl<Dimensions>>(
         HostPointer, Order, Type, Range, Pitch,
@@ -219,6 +224,7 @@ public:
         PropList);
   }
 
+  __SYCL2020_DEPRECATED("OpenCL interop APIs are deprecated")
   image(cl_mem ClMemObject, const context &SyclContext,
         event AvailableEvent = {}) {
     impl = std::make_shared<detail::image_impl<Dimensions>>(
@@ -255,7 +261,7 @@ public:
 
   /* Available only when: dimensions >1 */
   template <bool B = (Dimensions > 1)>
-  typename std::enable_if<B, range<Dimensions - 1>>::type get_pitch() const {
+  typename detail::enable_if_t<B, range<Dimensions - 1>> get_pitch() const {
     return impl->get_pitch();
   }
 
@@ -263,7 +269,9 @@ public:
   size_t get_size() const { return impl->getSize(); }
 
   // Returns the total number of elements in the image
-  size_t get_count() const { return impl->get_count(); }
+  __SYCL2020_DEPRECATED("get_count() is deprecated, please use size() instead")
+  size_t get_count() const { return size(); }
+  size_t size() const noexcept { return impl->get_count(); }
 
   // Returns the allocator provided to the image
   AllocatorT get_allocator() const {
@@ -272,18 +280,23 @@ public:
 
   template <typename DataT, access::mode AccessMode>
   accessor<detail::EnableIfImgAccDataT<DataT>, Dimensions, AccessMode,
-           access::target::image, access::placeholder::false_t>
+           access::target::image, access::placeholder::false_t,
+           ext::oneapi::accessor_property_list<>>
   get_access(handler &commandGroupHandler) {
     return accessor<DataT, Dimensions, AccessMode, access::target::image,
-                    access::placeholder::false_t>(*this, commandGroupHandler);
+                    access::placeholder::false_t,
+                    ext::oneapi::accessor_property_list<>>(*this,
+                                                           commandGroupHandler);
   }
 
   template <typename DataT, access::mode AccessMode>
   accessor<detail::EnableIfImgAccDataT<DataT>, Dimensions, AccessMode,
-           access::target::host_image, access::placeholder::false_t>
+           access::target::host_image, access::placeholder::false_t,
+           ext::oneapi::accessor_property_list<>>
   get_access() {
     return accessor<DataT, Dimensions, AccessMode, access::target::host_image,
-                    access::placeholder::false_t>(*this);
+                    access::placeholder::false_t,
+                    ext::oneapi::accessor_property_list<>>(*this);
   }
 
   template <typename Destination = std::nullptr_t>
@@ -294,7 +307,7 @@ public:
   void set_write_back(bool flag = true) { impl->set_write_back(flag); }
 
 private:
-  shared_ptr_class<detail::image_impl<Dimensions>> impl;
+  std::shared_ptr<detail::image_impl<Dimensions>> impl;
 
   template <class Obj>
   friend decltype(Obj::impl) detail::getSyclObjImpl(const Obj &SyclObject);
